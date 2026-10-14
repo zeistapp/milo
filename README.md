@@ -21,7 +21,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 
 2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo.
 
-3. Add `.github/workflows/milo.yml`. This example pins Milo to a full commit SHA:
+3. Add `.github/workflows/milo.yml`. Use `@main` to receive Milo updates automatically:
 
 ```yaml
 name: Milo dependencies
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: zeistapp/milo@59f9e2a4763fe177d714905241852dbc61c344b4
+      - uses: zeistapp/milo@main
         with:
           action: task
           category: dependencies
