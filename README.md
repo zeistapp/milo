@@ -6,7 +6,7 @@ It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, Rea
 
 ## Set up your repo
 
-Milo must be published to GitHub before another repo can use its action.
+Use the public `zeistapp/milo` action from any GitHub repository.
 
 1. Add `milo.config.json`, replacing `YOUR_OWNER/YOUR_REPO`:
 
@@ -21,7 +21,7 @@ Milo must be published to GitHub before another repo can use its action.
 
 2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo.
 
-3. Add `.github/workflows/milo.yml`. Replace `MILO_OWNER/milo@MILO_COMMIT_SHA` with the published action and its full commit SHA:
+3. Add `.github/workflows/milo.yml`. This example pins Milo to a full commit SHA:
 
 ```yaml
 name: Milo dependencies
@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: MILO_OWNER/milo@MILO_COMMIT_SHA
+      - uses: zeistapp/milo@43f62e58a9e4b699924ee8e08f9c531cbed3dc80
         with:
           action: task
           category: dependencies
@@ -74,3 +74,5 @@ Use `codex` or `claude`. Replace `MODEL_ID` with a supported model ID. Omit `mod
 For Claude, replace `codex-version` with `claude-version: ${{ vars.CLAUDE_VERSION }}` in the workflow and replace its `CODEX_API_KEY` environment entry with `ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}`. Set an exact `CLAUDE_VERSION` of 2.1.296 or newer and add the matching secret.
 
 See [local runs, permissions and advanced configuration](docs/usage.md).
+
+Licensed under [MIT](LICENSE), copyright 2026 zeist.
