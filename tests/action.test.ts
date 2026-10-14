@@ -72,3 +72,43 @@ test("distributed action reads the caller's config from an external working dire
       }
     }
   }));
+
+test("maintenance preflight stops before agent installation when credentials are missing", async () => {
+  const workflow = Bun.YAML.parse(
+    await Bun.file(join(root, ".github/workflows/maintenance.yml")).text(),
+  ) as { jobs: { run: { steps: Script[] } } };
+  const script = workflow.jobs.run.steps.find((step) =>
+    step.name?.startsWith("Validate maintenance credentials"),
+  )?.run;
+  if (!script) throw new Error("Missing maintenance preflight");
+  const env = {
+    CODEX_VERSION: "",
+    CLAUDE_VERSION: "2.1.296",
+    MILO_GITHUB_TOKEN: "fake-github-token",
+    ANTHROPIC_API_KEY: "",
+    OPENAI_API_KEY: "",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]]),
+  );
+  try {
+    Object.assign(process.env, env);
+    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
+    process.env.ANTHROPIC_API_KEY = "fake-anthropic-key";
+    await expect(command(["bash", "-c", script])).resolves.toBe("");
+    process.env.MILO_GITHUB_TOKEN = "";
+    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
+    process.env.MILO_GITHUB_TOKEN = "fake-github-token";
+    process.env.CLAUDE_VERSION = "";
+    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
+    process.env.CODEX_VERSION = "0.162.1";
+    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
+    process.env.OPENAI_API_KEY = "fake-openai-key";
+    await expect(command(["bash", "-c", script])).resolves.toBe("");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
