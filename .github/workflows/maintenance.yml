@@ -23,6 +23,13 @@ on:
       include-self:
         type: boolean
         default: true
+    secrets:
+      MILO_GITHUB_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
 permissions:
   contents: read
 jobs:
@@ -47,7 +54,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           test -n "$CODEX_VERSION$CLAUDE_VERSION" || { echo 'Set CODEX_VERSION or CLAUDE_VERSION for the configured provider'; exit 1; }
-          test -n "$MILO_GITHUB_TOKEN" || { echo 'Add MILO_GITHUB_TOKEN to the maintenance environment'; exit 1; }
+          test -n "$MILO_GITHUB_TOKEN" || { echo 'Add MILO_GITHUB_TOKEN to the maintenance environment and pass it from milo.yml'; exit 1; }
           if [ -n "$CLAUDE_VERSION" ]; then
             test -n "$ANTHROPIC_API_KEY" || { echo 'Add ANTHROPIC_API_KEY to the maintenance environment'; exit 1; }
           fi

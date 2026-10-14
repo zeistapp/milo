@@ -5,6 +5,13 @@ on:
       config:
         type: string
         default: milo.config.json
+    secrets:
+      MILO_GITHUB_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
 permissions:
   contents: read
 jobs:
@@ -41,7 +48,10 @@ jobs:
       matrix:
         category: ${{ fromJSON(needs.schedule.outputs.categories) }}
     uses: zeistapp/milo/.github/workflows/maintenance.yml@main
-    secrets: inherit
+    secrets:
+      MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
       action: task
       category: ${{ matrix.category }}
@@ -49,7 +59,10 @@ jobs:
       config: ${{ inputs.config }}
   reviews:
     uses: zeistapp/milo/.github/workflows/maintenance.yml@main
-    secrets: inherit
+    secrets:
+      MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
       action: reviews
       config: ${{ inputs.config }}

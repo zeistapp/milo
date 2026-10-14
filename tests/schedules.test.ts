@@ -104,10 +104,16 @@ test("one consumer workflow picks daily security and one weekly task per day", a
   ) as {
     jobs: {
       schedule: { steps: { run: string }[] };
-      tasks: { uses: string; secrets: string; with: Record<string, string> };
-      reviews: { uses: string; secrets: string; with: Record<string, string> };
+      tasks: { uses: string; secrets: unknown; with: Record<string, string> };
+      reviews: { uses: string; secrets: unknown; with: Record<string, string> };
     };
   };
+  const forwarded = Object.fromEntries(
+    ["MILO_GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"].map((name) => [
+      name,
+      `\${{ secrets.${name} }}`,
+    ]),
+  );
   const script = consumer.jobs.schedule.steps[0]?.run;
   if (!script) throw new Error("Missing schedule script");
   const pick = (event: string, day: string, hour: string) =>
@@ -157,15 +163,16 @@ test("one consumer workflow picks daily security and one weekly task per day", a
     expect(job.uses).toBe(
       "zeistapp/milo/.github/workflows/maintenance.yml@main",
     );
-    expect(job.secrets).toBe("inherit");
+    expect(job.secrets).toEqual(forwarded);
   }
   expect(consumer.jobs.reviews.with.action).toBe("reviews");
   const caller = Bun.YAML.parse(await Bun.file(`${root}/milo.yml`).text()) as {
-    jobs: { milo: { uses: string; secrets: string } };
+    jobs: { milo: { uses: string; secrets: unknown } };
   };
+  // Cross-owner callers receive no inherited secrets, so each level names them.
   expect(caller.jobs.milo).toEqual({
     uses: "zeistapp/milo/.github/workflows/consumer.yml@main",
-    secrets: "inherit",
+    secrets: forwarded,
   });
   const shared = Bun.YAML.parse(
     await Bun.file(`${root}/maintenance.yml`).text(),
@@ -176,6 +183,7 @@ test("one consumer workflow picks daily security and one weekly task per day", a
           config: { default: string };
           "include-self": { default: boolean };
         };
+        secrets: Record<string, unknown>;
       };
     };
   };
@@ -183,6 +191,9 @@ test("one consumer workflow picks daily security and one weekly task per day", a
     "milo.config.json",
   );
   expect(shared.on.workflow_call.inputs["include-self"].default).toBeTrue();
+  expect(Object.keys(shared.on.workflow_call.secrets)).toEqual(
+    Object.keys(forwarded),
+  );
 });
 test("a shared schedule skips categories a repo has disabled", () =>
   temporary("milo-skip-", async (folder) => {

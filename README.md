@@ -34,7 +34,11 @@ permissions:
 jobs:
   milo:
     uses: zeistapp/milo/.github/workflows/consumer.yml@main
-    secrets: inherit
+    # Named, because GitHub only inherits secrets within one owner. Keep them in the maintenance environment.
+    secrets:
+      MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
@@ -47,7 +51,7 @@ Older setups copied one workflow per task, so schedule changes, new tasks and ac
 
 1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
 2. Add the `milo.yml` from step 3 above.
-3. Keep your `maintenance` environment, secrets and variables as they are.
+3. Keep your `maintenance` environment, secrets and variables as they are. The `secrets:` block in `milo.yml` is required when your repo has a different owner from `zeistapp`: without it GitHub passes empty secrets.
 4. If you used `categories` to limit tasks, keep it. Otherwise Milo now runs all seven, including the new `modernisation` task.
 5. Optional: let Milo merge minor dependency PRs by adding `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]` to your repo entry. See [automatic merging](docs/usage.md#automatic-merging) for what that needs.
 6. Commit to your default branch, then run **Milo** from the Actions tab to check it works.
