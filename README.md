@@ -40,10 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: maintenance
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: zeistapp/milo@43f62e58a9e4b699924ee8e08f9c531cbed3dc80
+      - uses: zeistapp/milo@59f9e2a4763fe177d714905241852dbc61c344b4
         with:
           action: task
           category: dependencies
