@@ -144,7 +144,9 @@ test("every maintenance caller forwards environment secrets to the shared workfl
   const root = `${import.meta.dir}/../.github/workflows`;
   let callers = 0;
   for await (const file of new Bun.Glob("maintenance-*.yml").scan(root)) {
-    const workflow = Bun.YAML.parse(await Bun.file(`${root}/${file}`).text()) as {
+    const workflow = Bun.YAML.parse(
+      await Bun.file(`${root}/${file}`).text(),
+    ) as {
       jobs: Record<string, { uses?: string; secrets?: string }>;
     };
     for (const job of Object.values(workflow.jobs)) {
