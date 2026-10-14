@@ -42,4 +42,4 @@ jobs:
           config: examples/ecosystem.json
           self-repo: ${{ github.repository }}
           claude-version: '2.1.296'
-      - run: claude --version && pnpm --version && yarn --version
+      - run: claude --version && cd "$RUNNER_TEMP" && pnpm --version && yarn --version
