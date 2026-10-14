@@ -1,0 +1,14 @@
+name: Cleanup
+on:
+  schedule:
+    - cron: '43 3 * * 3'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  maintain:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: task
+      category: cleanup
+      period: week

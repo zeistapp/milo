@@ -1,0 +1,20 @@
+{
+  "agent": {
+    "provider": "codex",
+    "timeoutSeconds": 1800
+  },
+  "repos": [
+    {
+      "name": "YOUR_OWNER/YOUR_REPO",
+      "categories": [
+        "dependencies",
+        "security",
+        "architecture",
+        "cleanup",
+        "organisation",
+        "performance"
+      ],
+      "autoReady": []
+    }
+  ]
+}

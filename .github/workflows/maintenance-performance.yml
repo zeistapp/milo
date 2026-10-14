@@ -1,0 +1,14 @@
+name: Performance
+on:
+  schedule:
+    - cron: '19 4 1 * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  maintain:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: task
+      category: performance
+      period: month

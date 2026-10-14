@@ -1,0 +1,14 @@
+name: Security
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  maintain:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: task
+      category: security
+      period: day

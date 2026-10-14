@@ -1,0 +1,14 @@
+name: Dependencies
+on:
+  schedule:
+    - cron: '31 3 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  maintain:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: task
+      category: dependencies
+      period: week

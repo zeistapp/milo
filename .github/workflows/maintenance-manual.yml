@@ -1,0 +1,33 @@
+name: Manual maintenance
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [task, plan, reviews, work, review, revise]
+        default: plan
+      category:
+        type: choice
+        options: [dependencies, security, architecture, cleanup, organisation, performance]
+        default: dependencies
+      period:
+        type: choice
+        options: [day, week, month]
+        default: week
+      repo:
+        description: Target owner/repository, required for numbered actions
+        type: string
+      number:
+        description: Issue or PR number for work, review, or revise
+        type: string
+permissions:
+  contents: read
+jobs:
+  maintain:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: ${{ inputs.action }}
+      category: ${{ inputs.category }}
+      period: ${{ inputs.period }}
+      repo: ${{ inputs.repo }}
+      number: ${{ inputs.number }}

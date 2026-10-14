@@ -1,0 +1,12 @@
+name: PR reviews
+on:
+  schedule:
+    - cron: '23 */2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  review:
+    uses: ./.github/workflows/maintenance.yml
+    with:
+      action: reviews

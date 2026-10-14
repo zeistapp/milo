@@ -1,0 +1,151 @@
+import { parseArgs } from "node:util";
+import {
+  type Category,
+  categories,
+  includeSelfRepo,
+  loadConfig,
+  type Period,
+} from "./config.ts";
+import { localCheck } from "./local.ts";
+import { inspectProject } from "./project.ts";
+import { Runner } from "./runner.ts";
+
+export async function main(args = Bun.argv.slice(2)): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      config: { type: "string", default: "milo.config.json" },
+      repo: { type: "string" },
+      apply: { type: "boolean", default: false },
+      "report-dir": { type: "string" },
+      category: { type: "string" },
+      period: { type: "string", default: "week" },
+      "self-repo": { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  const configFile = values.config ?? "milo.config.json";
+  const period = values.period ?? "week";
+  if (values.help) {
+    console.log(
+      "Milo: bun run milo [--config path] [--repo owner/repo] <validate|inspect|check|plan|task|reviews|work|review|revise|tick> [number/path] [--apply] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
+    );
+    return;
+  }
+  const [action, target] = positionals;
+  if (action === "check") {
+    const config = values.repo ? await loadConfig(configFile) : undefined;
+    const repo = config?.repos.find((repo) => repo.name === values.repo);
+    if (values.repo && !repo)
+      throw new Error("No configured repository matched");
+    const report = await localCheck(
+      target ?? ".",
+      values["report-dir"] ??
+        `.milo/runs/${new Date().toISOString().replaceAll(":", "-")}`,
+      repo,
+    );
+    if (!report.passed)
+      throw new Error(
+        "Local checks failed; inspect the report and private command logs",
+      );
+    return;
+  }
+  if (action === "inspect") {
+    console.log(JSON.stringify(await inspectProject(target ?? "."), null, 2));
+    return;
+  }
+  if (
+    !action ||
+    ![
+      "validate",
+      "plan",
+      "task",
+      "reviews",
+      "work",
+      "review",
+      "revise",
+      "tick",
+    ].includes(action)
+  )
+    throw new Error("Specify a command; use --help");
+  if (values.category && !Object.hasOwn(categories, values.category))
+    throw new Error("Unknown maintenance category");
+  if (values.category && !["task", "plan", "work"].includes(action))
+    throw new Error("Use --category with task, plan, or work");
+  if (!["day", "week", "month"].includes(period))
+    throw new Error("period must be day, week, or month");
+  if (action === "task" && !values.category)
+    throw new Error("task requires --category");
+  let config = await loadConfig(configFile);
+  if (values["self-repo"])
+    config = includeSelfRepo(config, values["self-repo"]);
+  if (action === "validate") {
+    console.log("Configuration valid");
+    return;
+  }
+  const repos = config.repos.filter(
+    (repo) =>
+      (!values.repo || repo.name === values.repo) &&
+      (!values.category ||
+        !repo.categories ||
+        repo.categories.includes(values.category as Category)),
+  );
+  if (!repos.length) throw new Error("No configured repositories matched");
+  const numbered = ["work", "review", "revise"].includes(action);
+  if (
+    numbered &&
+    (repos.length !== 1 ||
+      !target ||
+      !/^[1-9][0-9]*$/.test(target) ||
+      !Number.isSafeInteger(Number(target)))
+  ) {
+    throw new Error("Select one repository and a positive ticket/PR number");
+  }
+  if (!numbered && target) throw new Error("Unexpected positional argument");
+  const runner = new Runner(config);
+  const failures: string[] = [];
+  for (const repo of repos) {
+    try {
+      if (action === "plan")
+        await runner.plan(
+          values.category
+            ? { ...repo, categories: [values.category as Category] }
+            : repo,
+          values.apply,
+          period as Period,
+        );
+      else if (action === "task")
+        await runner.runTasks(
+          repo,
+          values.category as Category,
+          period as Period,
+        );
+      else if (action === "reviews") await runner.runReviews(repo);
+      else if (action === "work")
+        await runner.work(
+          repo,
+          Number(target),
+          values.category as Category | undefined,
+        );
+      else if (action === "review" || action === "revise")
+        await runner.review(repo, Number(target), action === "revise");
+      else await runner.tick(repo);
+    } catch (error) {
+      failures.push(repo.name);
+      console.error(
+        `${repo.name}: ${error instanceof Error ? error.message : "Unknown failure"}`,
+      );
+    }
+  }
+  if (failures.length)
+    throw new Error(`${failures.length} repository run(s) failed`);
+}
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unknown failure");
+    process.exitCode = 1;
+  }
+}

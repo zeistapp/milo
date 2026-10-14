@@ -1,0 +1,95 @@
+name: Milo
+description: Ticket-driven maintenance and reviews for JavaScript and TypeScript repositories
+inputs:
+  config:
+    description: Configuration path in the caller's checked-out repository
+    default: milo.config.json
+  action:
+    description: validate, plan, task, reviews, work, review, revise, or tick
+    default: tick
+  repo:
+    description: Configured owner/repository (required for numbered actions)
+  number:
+    description: Issue or PR number for work, review, or revise
+  apply:
+    description: Create tickets when action is plan
+    default: 'false'
+  codex-version:
+    description: Exact Codex CLI version to install; omit if supplying an agent yourself
+  claude-version:
+    description: Exact Claude Code version to install (2.1.296+); omit when using Codex or an existing installation
+  category:
+    description: Maintenance category for a dedicated task runner
+  period:
+    description: Ticket deduplication period, day, week, or month
+    default: week
+  self-repo:
+    description: Add this owner/repository to the maintenance targets
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version: '1.4.3'
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      if: inputs.codex-version != '' || inputs.claude-version != ''
+      with:
+        node-version: '22'
+    - name: Install Codex
+      if: inputs.codex-version != ''
+      shell: bash
+      env:
+        CODEX_VERSION: ${{ inputs.codex-version }}
+      run: |
+        [[ "$CODEX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || { echo 'codex-version must be an exact version'; exit 1; }
+        npm install --global "@openai/codex@$CODEX_VERSION"
+    - name: Install Claude Code
+      if: inputs.claude-version != ''
+      shell: bash
+      env:
+        CLAUDE_VERSION: ${{ inputs.claude-version }}
+      run: |
+        [[ "$CLAUDE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'claude-version must be an exact release version'; exit 1; }
+        if [ "$RUNNER_OS" = 'Linux' ]; then
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap socat
+          if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = '1' ] && [ ! -e /etc/apparmor.d/bwrap ]; then
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          fi
+        fi
+        npm install --global "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+    - name: Run Milo
+      shell: bash
+      env:
+        MILO_ACTION_PATH: ${{ github.action_path }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_ACTION: ${{ inputs.action }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_NUMBER: ${{ inputs.number }}
+        INPUT_APPLY: ${{ inputs.apply }}
+        INPUT_CATEGORY: ${{ inputs.category }}
+        INPUT_PERIOD: ${{ inputs.period }}
+        INPUT_SELF_REPO: ${{ inputs.self-repo }}
+      run: |
+        if [ "$RUNNER_OS" = 'Windows' ]; then echo 'Milo currently supports Linux and macOS runners'; exit 1; fi
+        args=(--config "$INPUT_CONFIG")
+        if [ -n "$INPUT_REPO" ]; then args+=(--repo "$INPUT_REPO"); fi
+        if [ -n "$INPUT_CATEGORY" ] && [[ "$INPUT_ACTION" =~ ^(task|plan|work)$ ]]; then args+=(--category "$INPUT_CATEGORY"); fi
+        if [ -n "$INPUT_PERIOD" ]; then args+=(--period "$INPUT_PERIOD"); fi
+        if [ -n "$INPUT_SELF_REPO" ]; then args+=(--self-repo "$INPUT_SELF_REPO"); fi
+        case "$INPUT_ACTION" in
+          validate|tick|reviews) args+=("$INPUT_ACTION") ;;
+          task)
+            test -n "$INPUT_CATEGORY" || { echo 'category is required'; exit 1; }
+            args+=(task) ;;
+          plan)
+            args+=(plan)
+            if [ "$INPUT_APPLY" = 'true' ]; then args+=(--apply); fi ;;
+          work|review|revise)
+            [[ "$INPUT_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo 'A positive issue/PR number is required'; exit 1; }
+            test -n "$INPUT_REPO" || { echo 'repo is required'; exit 1; }
+            args+=("$INPUT_ACTION" "$INPUT_NUMBER") ;;
+          *) echo 'Unknown Milo action'; exit 1 ;;
+        esac
+        bun "$MILO_ACTION_PATH/src/cli.ts" "${args[@]}"

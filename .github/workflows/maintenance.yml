@@ -1,0 +1,62 @@
+name: Maintenance runner
+on:
+  workflow_call:
+    inputs:
+      action:
+        type: string
+        default: task
+      category:
+        type: string
+        default: ''
+      period:
+        type: string
+        default: week
+      repo:
+        type: string
+        default: ''
+      number:
+        type: string
+        default: ''
+      config:
+        type: string
+        default: examples/ecosystem.json
+      include-self:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  run:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: maintenance
+    concurrency:
+      group: milo-${{ github.repository }}-${{ contains(fromJSON('["reviews","review","revise"]'), inputs.action) && 'reviews' || inputs.category || inputs.action }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Validate pinned agent version
+        env:
+          CODEX_VERSION: ${{ vars.CODEX_VERSION }}
+          CLAUDE_VERSION: ${{ vars.CLAUDE_VERSION }}
+        run: test -n "$CODEX_VERSION$CLAUDE_VERSION" || { echo 'Set CODEX_VERSION or CLAUDE_VERSION for the configured provider'; exit 1; }
+      - name: Run Milo
+        uses: ./
+        with:
+          action: ${{ inputs.action }}
+          category: ${{ inputs.category }}
+          period: ${{ inputs.period }}
+          repo: ${{ inputs.repo }}
+          number: ${{ inputs.number }}
+          config: ${{ inputs.config }}
+          self-repo: ${{ inputs.include-self && github.repository || '' }}
+          apply: 'true'
+          codex-version: ${{ vars.CODEX_VERSION }}
+          claude-version: ${{ vars.CLAUDE_VERSION }}
+        env:
+          GH_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -1,0 +1,137 @@
+{
+  "agent": {
+    "provider": "codex",
+    "timeoutSeconds": 1800
+  },
+  "repos": [
+    {
+      "name": "YOUR_OWNER/ecosystem",
+      "autoReady": [],
+      "setup": [
+        {
+          "command": ["bun", "install", "--frozen-lockfile"]
+        },
+        {
+          "command": ["cp", "apps/api/.dev.vars.example", "apps/api/.dev.vars"]
+        }
+      ],
+      "checks": [
+        {
+          "command": ["bun", "run", "lint"]
+        },
+        {
+          "command": ["bun", "run", "typecheck"]
+        },
+        {
+          "command": ["bun", "run", "test"]
+        },
+        {
+          "command": ["bun", "run", "build"]
+        },
+        {
+          "command": [
+            "bun",
+            "-e",
+            "for (const app of ['admin','kiosk']) { let found=false; for await (const file of new Bun.Glob('apps/'+app+'/dist/assets/**/*.js').scan('.')) { if ((await Bun.file(file).text()).includes('https://api.example.com')) { found=true; break; } } if (!found) throw new Error(app+' bundle has no production API URL'); }"
+          ]
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "wrangler.jsonc",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/api"
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "wrangler.jsonc",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/admin"
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "wrangler.jsonc",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/kiosk"
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "wrangler.jsonc",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/docs"
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "dist/server/wrangler.json",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/gallery"
+        },
+        {
+          "command": [
+            "bun",
+            "x",
+            "--no-install",
+            "wrangler",
+            "deploy",
+            "--dry-run",
+            "--autoconfig=false",
+            "--config",
+            "dist/server/wrangler.json",
+            "--outdir",
+            ".wrangler/milo-dry-run"
+          ],
+          "cwd": "apps/site"
+        }
+      ]
+    }
+  ]
+}
