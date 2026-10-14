@@ -25,6 +25,7 @@ permissions:
 jobs:
   maintain:
     uses: ./.github/workflows/maintenance.yml
+    secrets: inherit
     with:
       action: ${{ inputs.action }}
       category: ${{ inputs.category }}

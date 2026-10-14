@@ -8,6 +8,7 @@ permissions:
 jobs:
   maintain:
     uses: ./.github/workflows/maintenance.yml
+    secrets: inherit
     with:
       action: task
       category: architecture

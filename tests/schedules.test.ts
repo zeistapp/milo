@@ -139,3 +139,20 @@ test("workflows have separate schedules, one shared implementation and the confi
   );
   expect(shared.on.workflow_call.inputs["include-self"].default).toBeTrue();
 });
+
+test("every maintenance caller forwards environment secrets to the shared workflow", async () => {
+  const root = `${import.meta.dir}/../.github/workflows`;
+  let callers = 0;
+  for await (const file of new Bun.Glob("maintenance-*.yml").scan(root)) {
+    const workflow = Bun.YAML.parse(await Bun.file(`${root}/${file}`).text()) as {
+      jobs: Record<string, { uses?: string; secrets?: string }>;
+    };
+    for (const job of Object.values(workflow.jobs)) {
+      if (job.uses === "./.github/workflows/maintenance.yml") {
+        expect(job.secrets).toBe("inherit");
+        callers++;
+      }
+    }
+  }
+  expect(callers).toBe(8);
+});

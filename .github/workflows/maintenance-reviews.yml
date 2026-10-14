@@ -8,5 +8,6 @@ permissions:
 jobs:
   review:
     uses: ./.github/workflows/maintenance.yml
+    secrets: inherit
     with:
       action: reviews
