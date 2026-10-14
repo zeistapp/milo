@@ -5,7 +5,7 @@
   },
   "repos": [
     {
-      "name": "YOUR_OWNER/YOUR_REPO",
+      "name": "zeistapp/milo",
       "categories": [
         "dependencies",
         "security",

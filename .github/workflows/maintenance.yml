@@ -19,7 +19,7 @@ on:
         default: ''
       config:
         type: string
-        default: examples/ecosystem.json
+        default: milo.config.json
       include-self:
         type: boolean
         default: true

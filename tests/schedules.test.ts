@@ -90,7 +90,7 @@ test("self maintenance includes the published runner repo without duplicating ex
   ]);
   expect(() => includeSelfRepo(config, "invalid")).toThrow("owner/repository");
 });
-test("workflows have separate schedules, one shared implementation and the ecosystem target", async () => {
+test("workflows have separate schedules, one shared implementation and the configured target", async () => {
   const root = `${import.meta.dir}/../.github/workflows`;
   const expected = {
     dependencies: "week",
@@ -135,7 +135,7 @@ test("workflows have separate schedules, one shared implementation and the ecosy
     };
   };
   expect(shared.on.workflow_call.inputs.config.default).toBe(
-    "examples/ecosystem.json",
+    "milo.config.json",
   );
   expect(shared.on.workflow_call.inputs["include-self"].default).toBeTrue();
 });
