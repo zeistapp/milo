@@ -113,9 +113,45 @@ export async function runClaude(
   if (
     Array.isArray(response.permission_denials) &&
     response.permission_denials.length
-  )
-    throw new Error(
-      "Claude encountered denied permissions; task needs human attention",
+  ) {
+    // Report only fixed labels, never agent-supplied arguments, paths or secrets.
+    const details = new Set(
+      response.permission_denials.map((denial: unknown) => {
+        if (!denial || typeof denial !== "object") return "unknown tool";
+        const item = denial as Record<string, unknown>;
+        const tool = [
+          "Bash",
+          "Read",
+          "Edit",
+          "Write",
+          "Glob",
+          "Grep",
+          "WebFetch",
+          "WebSearch",
+        ].find((name) => item.tool_name === name);
+        if (!tool) return "unknown tool";
+        const input = item.tool_input;
+        if (tool !== "Bash" || !input || typeof input !== "object") return tool;
+        const value = (input as Record<string, unknown>).command;
+        if (typeof value !== "string") return tool;
+        const operation = [
+          "bun outdated",
+          "bun install",
+          "bun test",
+          "bun run",
+          "npm",
+          "git status",
+          "git diff",
+          "git add",
+          "git commit",
+          "curl",
+        ].find((name) => value.includes(name));
+        return operation ? `${tool} (${operation})` : tool;
+      }),
     );
+    throw new Error(
+      `Claude encountered denied permissions: ${[...details].join(", ")}; task needs human attention`,
+    );
+  }
   return response.result;
 }

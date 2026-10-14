@@ -162,6 +162,24 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
           error,
         );
       }
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "partial",
+        permission_denials: [
+          {
+            tool_name: "Bash",
+            tool_input: { command: "bun outdated PRIVATE_DONT_LOG" },
+          },
+        ],
+      });
+      await expect(runAgent(config("claude"), root, "test")).rejects.toThrow(
+        "Bash (bun outdated)",
+      );
+      await expect(
+        runAgent(config("claude"), root, "test"),
+      ).rejects.not.toThrow("PRIVATE_DONT_LOG");
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
