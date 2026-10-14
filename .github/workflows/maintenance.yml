@@ -45,22 +45,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Validate maintenance credentials and pinned agent version
+      - name: Validate credentials and agent version for the configured provider
+        id: preflight
         env:
+          CONFIG: ${{ inputs.config }}
+          # Live-verified Claude Code release; set CLAUDE_VERSION to pin your own.
+          DEFAULT_CLAUDE_VERSION: '2.1.296'
           CODEX_VERSION: ${{ vars.CODEX_VERSION }}
           CLAUDE_VERSION: ${{ vars.CLAUDE_VERSION }}
           MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          test -n "$CODEX_VERSION$CLAUDE_VERSION" || { echo 'Set CODEX_VERSION or CLAUDE_VERSION for the configured provider'; exit 1; }
+          provider=$(jq -r '.agent.provider // "custom"' "$CONFIG") || { echo "Cannot read agent.provider from $CONFIG"; exit 1; }
           test -n "$MILO_GITHUB_TOKEN" || { echo 'Add MILO_GITHUB_TOKEN to the maintenance environment and pass it from milo.yml'; exit 1; }
-          if [ -n "$CLAUDE_VERSION" ]; then
-            test -n "$ANTHROPIC_API_KEY" || { echo 'Add ANTHROPIC_API_KEY to the maintenance environment'; exit 1; }
-          fi
-          if [ -n "$CODEX_VERSION" ]; then
-            test -n "$OPENAI_API_KEY" || { echo 'Add OPENAI_API_KEY to the maintenance environment'; exit 1; }
-          fi
+          case "$provider" in
+            claude)
+              test -n "$ANTHROPIC_API_KEY" || { echo 'Add ANTHROPIC_API_KEY to the maintenance environment'; exit 1; }
+              echo "claude-version=${CLAUDE_VERSION:-$DEFAULT_CLAUDE_VERSION}" >> "$GITHUB_OUTPUT" ;;
+            codex)
+              test -n "$CODEX_VERSION" || { echo 'Set CODEX_VERSION in the maintenance environment'; exit 1; }
+              test -n "$OPENAI_API_KEY" || { echo 'Add OPENAI_API_KEY to the maintenance environment'; exit 1; }
+              echo "codex-version=$CODEX_VERSION" >> "$GITHUB_OUTPUT" ;;
+          esac
       - name: Run Milo
         # Published action, so consumers calling this workflow run Milo rather than their own checkout.
         uses: zeistapp/milo@main
@@ -73,8 +80,8 @@ jobs:
           config: ${{ inputs.config }}
           self-repo: ${{ inputs.include-self && github.repository || '' }}
           apply: 'true'
-          codex-version: ${{ vars.CODEX_VERSION }}
-          claude-version: ${{ vars.CLAUDE_VERSION }}
+          codex-version: ${{ steps.preflight.outputs.codex-version }}
+          claude-version: ${{ steps.preflight.outputs.claude-version }}
         env:
           GH_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
           CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}

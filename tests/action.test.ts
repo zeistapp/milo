@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { minimumClaudeVersion } from "../src/claude.ts";
 import { command, temporary } from "../src/process.ts";
 
 interface Script {
+  id?: string;
   name?: string;
   run?: string;
 }
@@ -73,42 +75,75 @@ test("distributed action reads the caller's config from an external working dire
     }
   }));
 
-test("maintenance preflight stops before agent installation when credentials are missing", async () => {
-  const workflow = Bun.YAML.parse(
-    await Bun.file(join(root, ".github/workflows/maintenance.yml")).text(),
-  ) as { jobs: { run: { steps: Script[] } } };
-  const script = workflow.jobs.run.steps.find((step) =>
-    step.name?.startsWith("Validate maintenance credentials"),
-  )?.run;
-  if (!script) throw new Error("Missing maintenance preflight");
-  const env = {
-    CODEX_VERSION: "",
-    CLAUDE_VERSION: "2.1.296",
-    MILO_GITHUB_TOKEN: "fake-github-token",
-    ANTHROPIC_API_KEY: "",
-    OPENAI_API_KEY: "",
-  };
-  const previous = Object.fromEntries(
-    Object.keys(env).map((key) => [key, process.env[key]]),
-  );
-  try {
-    Object.assign(process.env, env);
-    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
-    process.env.ANTHROPIC_API_KEY = "fake-anthropic-key";
-    await expect(command(["bash", "-c", script])).resolves.toBe("");
-    process.env.MILO_GITHUB_TOKEN = "";
-    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
-    process.env.MILO_GITHUB_TOKEN = "fake-github-token";
-    process.env.CLAUDE_VERSION = "";
-    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
-    process.env.CODEX_VERSION = "0.162.1";
-    await expect(command(["bash", "-c", script])).rejects.toThrow("failed");
-    process.env.OPENAI_API_KEY = "fake-openai-key";
-    await expect(command(["bash", "-c", script])).resolves.toBe("");
-  } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-});
+test("maintenance preflight installs only the configured provider's agent", () =>
+  temporary("milo-preflight-", async (folder) => {
+    const workflow = Bun.YAML.parse(
+      await Bun.file(join(root, ".github/workflows/maintenance.yml")).text(),
+    ) as {
+      jobs: { run: { steps: (Script & { env?: Record<string, string> })[] } };
+    };
+    const step = workflow.jobs.run.steps.find(
+      (step) => step.id === "preflight",
+    );
+    if (!step?.run) throw new Error("Missing maintenance preflight");
+    const script = step.run;
+    const fallback = step.env?.DEFAULT_CLAUDE_VERSION ?? "";
+    // The shipped default must satisfy the adapter's minimum.
+    expect(
+      Bun.semver.order(fallback, minimumClaudeVersion),
+    ).toBeGreaterThanOrEqual(0);
+    const config = join(folder, "milo.config.json");
+    const output = join(folder, "output");
+    const run = async (provider: string, env: Record<string, string>) => {
+      await Bun.write(config, JSON.stringify({ agent: { provider } }));
+      await Bun.write(output, "");
+      const all = {
+        CONFIG: config,
+        GITHUB_OUTPUT: output,
+        DEFAULT_CLAUDE_VERSION: fallback,
+        CODEX_VERSION: "",
+        CLAUDE_VERSION: "",
+        MILO_GITHUB_TOKEN: "fake-github-token",
+        ANTHROPIC_API_KEY: "",
+        OPENAI_API_KEY: "",
+        ...env,
+      };
+      const previous = Object.fromEntries(
+        Object.keys(all).map((key) => [key, process.env[key]]),
+      );
+      try {
+        Object.assign(process.env, all);
+        await command(["bash", "-c", script]);
+        return (await Bun.file(output).text()).trim();
+      } finally {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    };
+    const anthropic = { ANTHROPIC_API_KEY: "fake-anthropic-key" };
+    const openai = { OPENAI_API_KEY: "fake-openai-key" };
+    expect(await run("claude", anthropic)).toBe(`claude-version=${fallback}`);
+    expect(await run("claude", { ...anthropic, CLAUDE_VERSION: "2.2.0" })).toBe(
+      "claude-version=2.2.0",
+    );
+    // A stray Codex pin no longer satisfies a Claude config.
+    await expect(
+      run("claude", { CODEX_VERSION: "0.162.1", ...openai }),
+    ).rejects.toThrow("failed");
+    await expect(
+      run("claude", { ...anthropic, MILO_GITHUB_TOKEN: "" }),
+    ).rejects.toThrow("failed");
+    await expect(run("codex", openai)).rejects.toThrow("failed");
+    await expect(run("codex", { CODEX_VERSION: "0.162.1" })).rejects.toThrow(
+      "failed",
+    );
+    expect(
+      await run("codex", {
+        ...openai,
+        CODEX_VERSION: "0.162.1",
+        CLAUDE_VERSION: "2.1.296",
+      }),
+    ).toBe("codex-version=0.162.1");
+  }));

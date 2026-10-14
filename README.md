@@ -71,7 +71,7 @@ Choose the provider and model in your config:
 
 Use `codex` or `claude`. Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. An alias such as `sonnet` follows provider updates; use an exact version ID to pin a release.
 
-For Claude, add an `ANTHROPIC_API_KEY` secret and an exact `CLAUDE_VERSION` variable (2.1.296 or newer) to the `maintenance` environment instead of the OpenAI pair.
+For Claude, add an `ANTHROPIC_API_KEY` secret to the `maintenance` environment instead of the OpenAI pair. Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own. Each run installs and checks only the agent your config's `provider` names.
 
 See [local runs, permissions and advanced configuration](docs/usage.md).
 
