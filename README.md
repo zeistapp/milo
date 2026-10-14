@@ -41,6 +41,19 @@ jobs:
 
 Every run reviews open Milo PRs. Between 02:00 and 05:59 UTC it also runs security daily and one weekly task: dependencies Monday, architecture Tuesday, cleanup Wednesday, modernisation Thursday, performance Friday and organisation Saturday. A manual run starts every task. Limit tasks with `categories` in your config.
 
+## Move an existing setup to automatic updates
+
+Older setups copied one workflow per task, so schedule changes, new tasks and action pins never reached them. Switch once and you won't need to edit workflows again.
+
+1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
+2. Add the `milo.yml` from step 3 above.
+3. Keep your `maintenance` environment, secrets and variables as they are.
+4. If you used `categories` to limit tasks, keep it. Otherwise Milo now runs all seven, including the new `modernisation` task.
+5. Optional: let Milo merge minor dependency PRs by adding `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]` to your repo entry. See [automatic merging](docs/usage.md#automatic-merging) for what that needs.
+6. Commit to your default branch, then run **Milo** from the Actions tab to check it works.
+
+If a run fails, the run summary now shows the reason.
+
 ## Agent choice
 
 Choose the provider and model in your config:
