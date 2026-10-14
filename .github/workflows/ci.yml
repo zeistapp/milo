@@ -34,9 +34,12 @@ jobs:
       - run: bun run typecheck
       - run: bun test
       - run: bun run build
+      # Consumers on @main run this install path next, so exercise it before any merge.
       - name: Validate reusable action
         uses: ./
         with:
           action: validate
           config: examples/ecosystem.json
           self-repo: ${{ github.repository }}
+          claude-version: '2.1.296'
+      - run: claude --version && pnpm --version && yarn --version

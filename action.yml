@@ -32,9 +32,13 @@ runs:
       with:
         bun-version: '1.4.3'
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-      if: inputs.codex-version != '' || inputs.claude-version != ''
       with:
         node-version: '22'
+    - name: Enable pnpm and Yarn
+      shell: bash
+      run: |
+        corepack enable
+        echo COREPACK_ENABLE_DOWNLOAD_PROMPT=0 >> "$GITHUB_ENV"
     - name: Install Codex
       if: inputs.codex-version != ''
       shell: bash
