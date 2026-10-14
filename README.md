@@ -54,9 +54,9 @@ jobs:
           CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`, then rerun. Milo opens a PR after your checks pass. Review and merge it yourself.
+4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`, then rerun. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
-Copy the workflow for `security`, `architecture`, `cleanup`, `organisation` or `performance`. Give each its own concurrency group, cron and ticket period (`day`, `week`, `month`). For PR reviews and requested revisions, use a separate workflow with `action: reviews`, no `category`, and its own group.
+Copy the workflow for `security`, `architecture`, `cleanup`, `organisation`, `performance` or `modernisation`. Give each its own concurrency group, cron and ticket period (`day` or `week`; `month` is supported but leaves work waiting). For PR reviews and requested revisions, use a separate workflow with `action: reviews`, no `category`, and its own group.
 
 ## Agent choice
 

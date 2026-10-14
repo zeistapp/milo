@@ -2,7 +2,7 @@
 
 Milo maintains JavaScript and TypeScript repos through GitHub tickets and reviewed pull requests. It runs on Bun, locally or in GitHub Actions. No server or local daemon is required.
 
-Separate runners cover dependencies, security, architecture, cleanup, organisation, performance and PR reviews. Add `milo:ready` to approve a ticket. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The review runner checks each PR commit and addresses a repository writer's **Changes requested** review. Humans control merging.
+Separate runners cover dependencies, security, architecture, cleanup, organisation, performance, modernisation and PR reviews. Every agent call receives the shared guidelines in `src/guidelines.txt` (a senior full-stack developer persona plus coding and writing standards) ahead of the harness policy. Add `milo:ready` to approve a ticket. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The review runner checks each PR commit and addresses a repository writer's **Changes requested** review. Humans merge, except for categories you list in `autoMerge`.
 
 ## Your frameworks and build patterns
 
@@ -110,20 +110,33 @@ Each schedule calls the shared `maintenance.yml` workflow with its own category,
 | Security | Daily |
 | Dependencies | Weekly, Monday |
 | Cleanup | Weekly, Wednesday |
-| Architecture | Monthly |
-| Organisation | Monthly |
-| Performance | Monthly |
+| Architecture | Weekly, Tuesday |
+| Organisation | Weekly, Thursday |
+| Modernisation | Weekly, Thursday |
+| Performance | Weekly, Friday |
 | PR reviews and revisions | Every two hours |
 
 Edit each `maintenance-<task>.yml` cron independently. Times use UTC. Match its `period` to the desired ticket cadence: day, week or month. Runs of the same category are serialised; different categories run independently on their own branches. Reviews and revisions share one concurrency group. The manual workflow supports targeted tasks and individual issue/PR operations. Avoid running the legacy all-category `tick` concurrently with the separate schedules.
 
 Other users can invoke this [composite action](https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action) using `zeistapp/milo@main`, after checking out their config. This automatically follows updates to Milo's main branch. For a dedicated runner, pass `action: task`, `category`, `period`, a pinned `codex-version`, and `GH_TOKEN`/`CODEX_API_KEY` through the step environment. Use `action: reviews` for the review queue. Use `claude-version` and `ANTHROPIC_API_KEY` for the built-in Claude adapter. Omit both installation inputs when supplying an installed custom agent. There are no production npm dependencies. Linux and macOS are supported; Windows is not supported yet.
 
-Require target-repo CI and human approval through branch rules, dismissing stale approvals after updates. Milo never merges and does not install CI or branch rules in other repos. Automated reviews are advisory comments. Start with `autoReady: []`; add categories once you trust their results. A tick runs at most one new task and one review/revision per repo. Set provider spending limits for a hard billing cap. Avoid overlapping local runs; the workflow serialises scheduled runs.
+Require target-repo CI and human approval through branch rules, dismissing stale approvals after updates. Milo does not install CI or branch rules in other repos. Automated reviews are advisory comments, and Milo merges nothing unless you opt in with `autoMerge`. Start with `autoReady: []`; add categories once you trust their results. A tick runs at most one new task and one review/revision per repo. Set provider spending limits for a hard billing cap. Avoid overlapping local runs; the workflow serialises scheduled runs.
+
+## Automatic merging
+
+List categories in a repo's `autoMerge` to let Milo merge their PRs without a human, for example `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]`. Milo merges a PR only when all of these hold:
+
+- The reviewer agent ends its review with `Verdict: merge` (minor, non-breaking, in scope and tested).
+- The change is at most 300 lines outside lockfiles, has no binary files, and adds or removes no dependencies or package manifests.
+- Every changed dependency is a plain semver version and stays within its current major (or minor below 1.0).
+- A later review run finds at least one CI check on that exact commit, and all of them passed.
+- No one's latest review requests changes, and the branch is not behind its base. Milo updates a stale branch, then reviews and checks the new commit again.
+
+Merges use squash and pin the reviewed commit. Branch rules still apply, so a rule requiring human approval keeps these PRs waiting. Your repo must run CI on pull requests; Milo's own checks are not enough on their own. The token also needs Checks and Commit statuses read access.
 
 ## Recovery and boundaries
 
-Failures label tickets `milo:blocked`. Reproduce the failed configured command locally, fix it and remove the label. Command output is withheld from logs to avoid publishing secrets. Broken baselines stop before the agent. Retries recover pushed branches, and concurrent PR updates stop publication. No-change tasks close with a report; merged PRs close their tickets. Closed unmerged PRs require human triage. Older reviews need resubmission on the current commit before another revision.
+Failures label tickets `milo:blocked` and print the reason as a run annotation. Reproduce the failed configured command locally, fix it and remove the label. Command output is withheld from logs to avoid publishing secrets. Broken baselines stop before the agent. Retries recover pushed branches, and concurrent PR updates stop publication. No-change tasks close with a report; merged PRs close their tickets. Closed unmerged PRs require human triage. Older reviews need resubmission on the current commit before another revision.
 
 Use disposable runners for trusted repos. GitHub tokens are stripped from agent/check environments, Git credential helpers are disabled there, and policy/automation file changes are rejected. This is defence in depth, not OS isolation: agents, setup scripts and repo code execute commands. Use a container or VM for stronger isolation. Keep sensitive security findings private and enable dependency alerts, secret scanning and code scanning where available.
 

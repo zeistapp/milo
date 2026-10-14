@@ -1,7 +1,7 @@
 name: Architecture
 on:
   schedule:
-    - cron: '7 4 1 * *'
+    - cron: '7 4 * * 2'
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,4 +12,4 @@ jobs:
     with:
       action: task
       category: architecture
-      period: month
+      period: week

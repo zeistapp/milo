@@ -13,9 +13,19 @@
         "architecture",
         "cleanup",
         "organisation",
-        "performance"
+        "performance",
+        "modernisation"
       ],
-      "autoReady": []
+      "autoReady": ["dependencies"],
+      "autoMerge": [
+        "dependencies",
+        "security",
+        "architecture",
+        "cleanup",
+        "organisation",
+        "performance",
+        "modernisation"
+      ]
     }
   ]
 }

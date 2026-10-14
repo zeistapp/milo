@@ -9,6 +9,7 @@ import {
   type GitHubClient,
   type Issue,
   latestRequests,
+  mergeBlocker,
   type PullRequest,
   type Review,
   Runner,
@@ -78,7 +79,7 @@ test("only approved tickets and same-repo Milo PRs may run", () => {
       sha: "head",
       repo: { full_name: "owner/repo" },
     },
-    base: { sha: "base" },
+    base: { ref: "main", sha: "base" },
   };
   validatePR(pr, { name: "owner/repo" });
   expect(() =>
@@ -246,7 +247,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence");`,
                 sha,
                 repo: { full_name: "owner/repo" },
               },
-              base: { sha: base },
+              base: { ref: "main", sha: base },
             };
             prs.push(pr);
             await git(remote, "update-ref", "refs/pull/34/head", sha);
@@ -337,3 +338,119 @@ await Bun.write(Bun.argv[2]!, "Report with evidence");`,
     }),
   15_000,
 );
+
+test("auto-merge blocks majors, dependency changes and large diffs", () =>
+  temporary("milo-merge-", async (root) => {
+    const git = (...args: string[]) => command(["git", ...args], { cwd: root });
+    const manifest = (dependencies: Record<string, string>) =>
+      Bun.write(join(root, "package.json"), JSON.stringify({ dependencies }));
+    const commit = async () => {
+      await git("add", ".");
+      await git("commit", "-qm", "change");
+      return git("rev-parse", "HEAD");
+    };
+    await git("init", "-q");
+    await git("config", "user.name", "Test");
+    await git("config", "user.email", "test@example.test");
+    await manifest({ hono: "^4.1.0", tiny: "0.3.1", exact: "1.0.0" });
+    const base = await commit();
+    await manifest({ hono: "^4.9.2", tiny: "0.3.9", exact: "1.0.1" });
+    await Bun.write(join(root, "bun.lock"), "x\n".repeat(1000));
+    await commit();
+    expect(await mergeBlocker(root, base)).toBeUndefined();
+    const cases: [Record<string, string>, string][] = [
+      [{ hono: "^5.0.0", tiny: "0.3.1", exact: "1.0.0" }, "major"],
+      [{ hono: "^4.1.0", tiny: "0.4.0", exact: "1.0.0" }, "major"],
+      [{ hono: "latest", tiny: "0.3.1", exact: "1.0.0" }, "non-semver"],
+      [{ hono: "^4.1.0", tiny: "0.3.1" }, "removed"],
+    ];
+    for (const [dependencies, reason] of cases) {
+      await git("checkout", "-q", "--detach", base);
+      await manifest(dependencies);
+      await commit();
+      expect(await mergeBlocker(root, base)).toContain(reason);
+    }
+    await git("checkout", "-q", "--detach", base);
+    await Bun.write(join(root, "big.ts"), "x\n".repeat(301));
+    await commit();
+    expect(await mergeBlocker(root, base)).toBe("301 changed lines");
+  }));
+test("auto-merge waits for CI, refreshes stale branches and respects change requests", async () => {
+  const repo: Repo = {
+    name: "owner/repo",
+    categories: ["dependencies"],
+    autoMerge: ["dependencies"],
+  };
+  const pr: PullRequest = {
+    number: 34,
+    state: "open",
+    body: "",
+    html_url: "https://example.test/pr/34",
+    head: {
+      ref: "milo/issue-12",
+      sha: "abc",
+      repo: { full_name: "owner/repo" },
+    },
+    base: { ref: "main", sha: "base" },
+  };
+  let runs = [{ status: "in_progress", conclusion: null as string | null }];
+  let behind = 0;
+  let reviews: Review[] = [];
+  let comment = "<!-- milo:review:abc --><!-- milo:merge -->\n\nreport";
+  const writes: string[] = [];
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string, method = "GET"): Promise<T> {
+      if (method !== "GET") writes.push(endpoint);
+      const responses: Record<string, unknown> = {
+        "issues/12": { ...issue(), labels: [{ name: "milo:dependencies" }] },
+        "commits/abc/check-runs?per_page=100": { check_runs: runs },
+        "commits/abc/status": { state: "pending", total_count: 0 },
+        "compare/main...abc": { behind_by: behind },
+      };
+      return (responses[endpoint] ?? {}) as T;
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      const responses: Record<string, unknown[]> = {
+        "pulls?state=open": [pr],
+        "pulls/34/reviews": reviews,
+        "issues/34/comments": [{ body: comment, user: { login: "milo" } }],
+      };
+      return (responses[endpoint] ?? []) as T[];
+    },
+    async comment() {},
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+  );
+  await runner.runReviews(repo);
+  expect(writes).toEqual([]);
+  runs = [{ status: "completed", conclusion: "success" }];
+  behind = 2;
+  await runner.runReviews(repo);
+  expect(writes).toEqual(["pulls/34/update-branch"]);
+  behind = 0;
+  reviews = [
+    {
+      id: 1,
+      state: "CHANGES_REQUESTED",
+      commit_id: "old",
+      user: { login: "owner" },
+      body: "",
+    },
+  ];
+  await runner.runReviews(repo);
+  expect(writes).toHaveLength(1);
+  reviews = [];
+  await runner.runReviews({ ...repo, autoMerge: [] });
+  expect(writes).toHaveLength(1);
+  comment = "<!-- milo:review:abc -->\n\n<!-- milo:merge -->";
+  await runner.runReviews(repo);
+  expect(writes).toHaveLength(1);
+  comment = "<!-- milo:review:abc --><!-- milo:merge -->";
+  await runner.runReviews(repo);
+  expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
+});

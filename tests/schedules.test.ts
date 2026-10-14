@@ -96,9 +96,10 @@ test("workflows have separate schedules, one shared implementation and the confi
     dependencies: "week",
     security: "day",
     cleanup: "week",
-    organisation: "month",
-    architecture: "month",
-    performance: "month",
+    organisation: "week",
+    architecture: "week",
+    performance: "week",
+    modernisation: "week",
   };
   for (const [category, period] of Object.entries(expected)) {
     const workflow = Bun.YAML.parse(
@@ -156,5 +157,5 @@ test("every maintenance caller forwards environment secrets to the shared workfl
       }
     }
   }
-  expect(callers).toBe(8);
+  expect(callers).toBe(9);
 });

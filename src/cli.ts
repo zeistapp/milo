@@ -10,6 +10,15 @@ import { localCheck } from "./local.ts";
 import { inspectProject } from "./project.ts";
 import { Runner } from "./runner.ts";
 
+// Annotate failures in Actions so the cause shows in the run summary, not only in the step log.
+function fail(message: string): void {
+  console.error(
+    process.env.GITHUB_ACTIONS === "true"
+      ? `::error::${message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`
+      : message,
+  );
+}
+
 export async function main(args = Bun.argv.slice(2)): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
@@ -133,7 +142,7 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       else await runner.tick(repo);
     } catch (error) {
       failures.push(repo.name);
-      console.error(
+      fail(
         `${repo.name}: ${error instanceof Error ? error.message : "Unknown failure"}`,
       );
     }
@@ -145,7 +154,7 @@ if (import.meta.main) {
   try {
     await main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : "Unknown failure");
+    fail(error instanceof Error ? error.message : "Unknown failure");
     process.exitCode = 1;
   }
 }

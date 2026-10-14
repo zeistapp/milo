@@ -11,6 +11,10 @@ export const categories = {
     "Improve navigation, naming and documentation where it helps maintenance. Update affected imports, exports and links.",
   performance:
     "Measure a bottleneck, establish a baseline and optimise it. Do not claim improvements without measurements.",
+  modernisation:
+    "Replace dated JS, TS and CSS with modern native features where the result is shorter and clearer, within the project's supported runtimes and browser targets. " +
+    "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. " +
+    "Prefer inference, satisfies and as const over annotations and assertions. Add Zod only where it replaces hand-written validation or unchecked casts. Preserve behaviour.",
 };
 export type Category = keyof typeof categories;
 export type Period = "day" | "week" | "month";
@@ -23,6 +27,7 @@ export interface Repo {
   name: string;
   categories?: Category[];
   autoReady?: Category[];
+  autoMerge?: Category[];
   setup?: Step[];
   checks?: Step[];
 }
@@ -138,14 +143,14 @@ export function parseConfig(value: unknown): Config {
     const selected = categoryList(repo.categories, "repo.categories");
     if (selected?.length === 0) throw new Error("Select at least one category");
     const autoReady = categoryList(repo.autoReady, "repo.autoReady");
+    const autoMerge = categoryList(repo.autoMerge, "repo.autoMerge");
     if (
-      autoReady?.some(
-        (item) =>
-          !Object.hasOwn(categories, item) ||
-          (selected && !selected.includes(item)),
+      selected &&
+      [...(autoReady ?? []), ...(autoMerge ?? [])].some(
+        (item) => !selected.includes(item),
       )
     ) {
-      throw new Error("autoReady must be a subset of categories");
+      throw new Error("autoReady and autoMerge must be subsets of categories");
     }
     const checks = steps(repo.checks, "repo.checks");
     if (checks?.length === 0)
@@ -156,6 +161,7 @@ export function parseConfig(value: unknown): Config {
       name: repo.name,
       categories: selected,
       autoReady,
+      ...(autoMerge ? { autoMerge } : {}),
       setup: steps(repo.setup, "repo.setup"),
       checks,
     };

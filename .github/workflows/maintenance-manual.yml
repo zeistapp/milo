@@ -8,7 +8,7 @@ on:
         default: plan
       category:
         type: choice
-        options: [dependencies, security, architecture, cleanup, organisation, performance]
+        options: [dependencies, security, architecture, cleanup, organisation, performance, modernisation]
         default: dependencies
       period:
         type: choice
