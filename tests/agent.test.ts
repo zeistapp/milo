@@ -41,6 +41,10 @@ test("Claude reviews expose no write or command tools; edits require a shell san
   );
   const editing = claudeCommand("/repo", false, "exact-model");
   expect(editing.slice(-2)).toEqual(["--model", "exact-model"]);
+  expect(editing[editing.indexOf("--allowedTools") + 1]).toContain("Bash");
+  expect(readonly[readonly.indexOf("--allowedTools") + 1]).not.toContain(
+    "Bash",
+  );
   expect(editing).not.toContain("--dangerously-skip-permissions");
   expect(editing).toContain("--restricted");
   const settings = JSON.parse(

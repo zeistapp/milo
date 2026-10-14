@@ -58,7 +58,7 @@ export function claudeCommand(
     "--tools",
     tools.join(","),
     "--allowedTools",
-    tools.filter((tool) => tool !== "Bash").join(","),
+    tools.join(","),
     "--settings",
     JSON.stringify(settings),
     "--output-format",
