@@ -55,7 +55,8 @@ jobs:
             test -n "$OPENAI_API_KEY" || { echo 'Add OPENAI_API_KEY to the maintenance environment'; exit 1; }
           fi
       - name: Run Milo
-        uses: ./
+        # Published action, so consumers calling this workflow run Milo rather than their own checkout.
+        uses: zeistapp/milo@main
         with:
           action: ${{ inputs.action }}
           category: ${{ inputs.category }}

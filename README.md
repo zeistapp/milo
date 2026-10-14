@@ -21,42 +21,25 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 
 2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo.
 
-3. Add `.github/workflows/milo.yml`. Use `@main` to receive Milo updates automatically:
+3. Add `.github/workflows/milo.yml`. This one file stays the same forever: Milo's schedule, task list and pinned actions come from `zeistapp/milo@main`.
 
 ```yaml
-name: Milo dependencies
+name: Milo
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: '23 */2 * * *'
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: milo-dependencies
-  cancel-in-progress: false
 jobs:
-  maintain:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
-    environment: maintenance
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
-      - uses: zeistapp/milo@main
-        with:
-          action: task
-          category: dependencies
-          period: week
-          codex-version: ${{ vars.CODEX_VERSION }}
-        env:
-          GH_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
-          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  milo:
+    uses: zeistapp/milo/.github/workflows/consumer.yml@main
+    secrets: inherit
 ```
 
-4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`, then rerun. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
+4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
-Copy the workflow for `security`, `architecture`, `cleanup`, `organisation`, `performance` or `modernisation`. Give each its own concurrency group, cron and ticket period (`day` or `week`; `month` is supported but leaves work waiting). For PR reviews and requested revisions, use a separate workflow with `action: reviews`, no `category`, and its own group.
+Every run reviews open Milo PRs. Between 02:00 and 05:59 UTC it also runs security daily and one weekly task: dependencies Monday, architecture Tuesday, cleanup Wednesday, modernisation Thursday, performance Friday and organisation Saturday. A manual run starts every task. Limit tasks with `categories` in your config.
 
 ## Agent choice
 
@@ -71,7 +54,7 @@ Choose the provider and model in your config:
 
 Use `codex` or `claude`. Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. An alias such as `sonnet` follows provider updates; use an exact version ID to pin a release.
 
-For Claude, replace `codex-version` with `claude-version: ${{ vars.CLAUDE_VERSION }}` in the workflow and replace its `CODEX_API_KEY` environment entry with `ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}`. Set an exact `CLAUDE_VERSION` of 2.1.296 or newer and add the matching secret.
+For Claude, add an `ANTHROPIC_API_KEY` secret and an exact `CLAUDE_VERSION` variable (2.1.296 or newer) to the `maintenance` environment instead of the OpenAI pair.
 
 See [local runs, permissions and advanced configuration](docs/usage.md).
 

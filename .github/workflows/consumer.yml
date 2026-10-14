@@ -1,0 +1,55 @@
+name: Milo consumer
+on:
+  workflow_call:
+    inputs:
+      config:
+        type: string
+        default: milo.config.json
+permissions:
+  contents: read
+jobs:
+  schedule:
+    runs-on: ubuntu-latest
+    outputs:
+      categories: ${{ steps.pick.outputs.categories }}
+    steps:
+      - id: pick
+        name: Pick today's tasks
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # CEILING: GitHub can start scheduled runs late. Tasks run in a 02:00-05:59 UTC window and
+          # ticket dedupe absorbs repeat runs; widen the window if delayed runs skip a day.
+          day=${MILO_DAY:-$(date -u +%u)}
+          hour=$((10#${MILO_HOUR:-$(date -u +%H)}))
+          weekly=('' dependencies architecture cleanup modernisation performance organisation)
+          if [ "$EVENT" != schedule ]; then
+            categories='["security","dependencies","architecture","cleanup","modernisation","performance","organisation"]'
+          elif [ "$hour" -lt 2 ] || [ "$hour" -ge 6 ]; then
+            categories='[]'
+          elif [ -n "${weekly[$day]:-}" ]; then
+            categories="[\"security\",\"${weekly[$day]}\"]"
+          else
+            categories='["security"]'
+          fi
+          echo "categories=$categories" >> "$GITHUB_OUTPUT"
+  tasks:
+    needs: schedule
+    if: needs.schedule.outputs.categories != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        category: ${{ fromJSON(needs.schedule.outputs.categories) }}
+    uses: zeistapp/milo/.github/workflows/maintenance.yml@main
+    secrets: inherit
+    with:
+      action: task
+      category: ${{ matrix.category }}
+      period: ${{ matrix.category == 'security' && 'day' || 'week' }}
+      config: ${{ inputs.config }}
+  reviews:
+    uses: zeistapp/milo/.github/workflows/maintenance.yml@main
+    secrets: inherit
+    with:
+      action: reviews
+      config: ${{ inputs.config }}

@@ -1,4 +1,4 @@
-name: PR reviews
+name: Milo
 on:
   schedule:
     - cron: '23 */2 * * *'
@@ -6,8 +6,6 @@ on:
 permissions:
   contents: read
 jobs:
-  review:
-    uses: ./.github/workflows/maintenance.yml
+  milo:
+    uses: zeistapp/milo/.github/workflows/consumer.yml@main
     secrets: inherit
-    with:
-      action: reviews

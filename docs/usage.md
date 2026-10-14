@@ -103,20 +103,20 @@ Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`cla
 
 Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `OPENAI_API_KEY` as secrets, plus an exact tested `CODEX_VERSION` as an environment variable. For Claude, use `ANTHROPIC_API_KEY` and `CLAUDE_VERSION` instead and change the config provider. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. GitHub App installation tokens need additional bot identity handling and are not supported yet. The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
-Each schedule calls the shared `maintenance.yml` workflow with its own category, ticket period and runner. The shared workflow selects `milo.config.json` and adds the published Milo repository as a target using `github.repository`. It runs only on the default branch. Set `include-self: false` in a caller to disable self-maintenance. Configured targets require ticket approval by default. Add a `milo:<category>` label to custom tickets so the right runner can pick them up.
+Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every two hours and calls `consumer.yml`. That workflow picks the day's tasks and calls the shared `maintenance.yml` once per task plus once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Add a `milo:<category>` label to custom tickets so the right runner can pick them up.
 
-| Runner | Default interval |
+| Runner | Interval (UTC) |
 | --- | --- |
-| Security | Daily |
-| Dependencies | Weekly, Monday |
-| Cleanup | Weekly, Wednesday |
-| Architecture | Weekly, Tuesday |
-| Organisation | Weekly, Thursday |
-| Modernisation | Weekly, Thursday |
-| Performance | Weekly, Friday |
-| PR reviews and revisions | Every two hours |
+| PR reviews, revisions and merges | Every run (two hours) |
+| Security | Daily, 02:00 to 05:59 |
+| Dependencies | Monday |
+| Architecture | Tuesday |
+| Cleanup | Wednesday |
+| Modernisation | Thursday |
+| Performance | Friday |
+| Organisation | Saturday |
 
-Edit each `maintenance-<task>.yml` cron independently. Times use UTC. Match its `period` to the desired ticket cadence: day, week or month. Runs of the same category are serialised; different categories run independently on their own branches. Reviews and revisions share one concurrency group. The manual workflow supports targeted tasks and individual issue/PR operations. Avoid running the legacy all-category `tick` concurrently with the separate schedules.
+Weekly tasks run in the same 02:00 to 05:59 window, which catches two runs; weekly ticket dedupe makes the second a no-op. A manual run starts every task. Tasks a repo excludes through `categories` are skipped. Runs of the same category are serialised; different categories run in parallel on their own branches. Reviews share one concurrency group. The Manual maintenance workflow supports targeted tasks and individual issue/PR operations. To keep your own cron and periods instead, call `zeistapp/milo/.github/workflows/maintenance.yml@main` from your own workflows with `action`, `category` and `period`; those copies don't receive schedule changes.
 
 Other users can invoke this [composite action](https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action) using `zeistapp/milo@main`, after checking out their config. This automatically follows updates to Milo's main branch. For a dedicated runner, pass `action: task`, `category`, `period`, a pinned `codex-version`, and `GH_TOKEN`/`CODEX_API_KEY` through the step environment. Use `action: reviews` for the review queue. Use `claude-version` and `ANTHROPIC_API_KEY` for the built-in Claude adapter. Omit both installation inputs when supplying an installed custom agent. There are no production npm dependencies. Linux and macOS are supported; Windows is not supported yet.
 

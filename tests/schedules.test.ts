@@ -1,5 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
-import { type Config, includeSelfRepo, type Repo } from "../src/config.ts";
+import { main } from "../src/cli.ts";
+import {
+  type Config,
+  categories,
+  includeSelfRepo,
+  type Repo,
+} from "../src/config.ts";
+import { command, temporary } from "../src/process.ts";
 import {
   type GitHubClient,
   type Issue,
@@ -90,39 +97,76 @@ test("self maintenance includes the published runner repo without duplicating ex
   ]);
   expect(() => includeSelfRepo(config, "invalid")).toThrow("owner/repository");
 });
-test("workflows have separate schedules, one shared implementation and the configured target", async () => {
+test("one consumer workflow picks daily security and one weekly task per day", async () => {
   const root = `${import.meta.dir}/../.github/workflows`;
-  const expected = {
-    dependencies: "week",
-    security: "day",
-    cleanup: "week",
-    organisation: "week",
-    architecture: "week",
-    performance: "week",
-    modernisation: "week",
-  };
-  for (const [category, period] of Object.entries(expected)) {
-    const workflow = Bun.YAML.parse(
-      await Bun.file(`${root}/maintenance-${category}.yml`).text(),
-    ) as {
-      on: { schedule: { cron: string }[] };
-      jobs: {
-        maintain: {
-          uses: string;
-          with: { category: string; period: string; action: string };
-        };
-      };
+  const consumer = Bun.YAML.parse(
+    await Bun.file(`${root}/consumer.yml`).text(),
+  ) as {
+    jobs: {
+      schedule: { steps: { run: string }[] };
+      tasks: { uses: string; secrets: string; with: Record<string, string> };
+      reviews: { uses: string; secrets: string; with: Record<string, string> };
     };
-    expect(workflow.on.schedule[0]?.cron).toBeDefined();
-    expect(workflow.jobs.maintain.uses).toBe(
-      "./.github/workflows/maintenance.yml",
-    );
-    expect(workflow.jobs.maintain.with).toEqual({
-      action: "task",
-      category,
-      period,
+  };
+  const script = consumer.jobs.schedule.steps[0]?.run;
+  if (!script) throw new Error("Missing schedule script");
+  const pick = (event: string, day: string, hour: string) =>
+    temporary("milo-schedule-", async (folder) => {
+      const output = `${folder}/output`;
+      const env = {
+        EVENT: event,
+        MILO_DAY: day,
+        MILO_HOUR: hour,
+        GITHUB_OUTPUT: output,
+      };
+      const previous = Object.fromEntries(
+        Object.keys(env).map((key) => [key, process.env[key]]),
+      );
+      try {
+        Object.assign(process.env, env);
+        await Bun.write(output, "");
+        await command(["bash", "-c", script]);
+        return JSON.parse(
+          (await Bun.file(output).text()).replace("categories=", ""),
+        ) as string[];
+      } finally {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
     });
+  const weekly = new Set<string>();
+  for (const day of ["1", "2", "3", "4", "5", "6", "7"]) {
+    const today = await pick("schedule", day, "04");
+    expect(today[0]).toBe("security");
+    for (const category of today.slice(1)) weekly.add(category);
   }
+  expect([...weekly, "security"].sort()).toEqual(
+    Object.keys(categories).sort(),
+  );
+  expect(await pick("schedule", "1", "08")).toEqual([]);
+  expect(await pick("schedule", "1", "02")).toEqual([
+    "security",
+    "dependencies",
+  ]);
+  expect((await pick("workflow_dispatch", "1", "08")).sort()).toEqual(
+    Object.keys(categories).sort(),
+  );
+  for (const job of [consumer.jobs.tasks, consumer.jobs.reviews]) {
+    expect(job.uses).toBe(
+      "zeistapp/milo/.github/workflows/maintenance.yml@main",
+    );
+    expect(job.secrets).toBe("inherit");
+  }
+  expect(consumer.jobs.reviews.with.action).toBe("reviews");
+  const caller = Bun.YAML.parse(await Bun.file(`${root}/milo.yml`).text()) as {
+    jobs: { milo: { uses: string; secrets: string } };
+  };
+  expect(caller.jobs.milo).toEqual({
+    uses: "zeistapp/milo/.github/workflows/consumer.yml@main",
+    secrets: "inherit",
+  });
   const shared = Bun.YAML.parse(
     await Bun.file(`${root}/maintenance.yml`).text(),
   ) as {
@@ -140,22 +184,26 @@ test("workflows have separate schedules, one shared implementation and the confi
   );
   expect(shared.on.workflow_call.inputs["include-self"].default).toBeTrue();
 });
-
-test("every maintenance caller forwards environment secrets to the shared workflow", async () => {
-  const root = `${import.meta.dir}/../.github/workflows`;
-  let callers = 0;
-  for await (const file of new Bun.Glob("maintenance-*.yml").scan(root)) {
-    const workflow = Bun.YAML.parse(
-      await Bun.file(`${root}/${file}`).text(),
-    ) as {
-      jobs: Record<string, { uses?: string; secrets?: string }>;
-    };
-    for (const job of Object.values(workflow.jobs)) {
-      if (job.uses === "./.github/workflows/maintenance.yml") {
-        expect(job.secrets).toBe("inherit");
-        callers++;
-      }
-    }
-  }
-  expect(callers).toBe(9);
-});
+test("a shared schedule skips categories a repo has disabled", () =>
+  temporary("milo-skip-", async (folder) => {
+    const file = `${folder}/milo.config.json`;
+    await Bun.write(
+      file,
+      JSON.stringify({
+        agent: { provider: "claude" },
+        repos: [{ name: "owner/repo", categories: ["security"] }],
+      }),
+    );
+    await main(["--config", file, "--category", "cleanup", "task"]);
+    await expect(
+      main([
+        "--config",
+        file,
+        "--repo",
+        "owner/repo",
+        "--category",
+        "cleanup",
+        "task",
+      ]),
+    ).rejects.toThrow("No configured repositories matched");
+  }));

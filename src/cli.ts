@@ -100,6 +100,11 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
         !repo.categories ||
         repo.categories.includes(values.category as Category)),
   );
+  // Shared schedules run every category; a repo that disabled this one has nothing to do.
+  if (!repos.length && action === "task" && !values.repo) {
+    console.log(`No configured repository enables ${values.category}`);
+    return;
+  }
   if (!repos.length) throw new Error("No configured repositories matched");
   const numbered = ["work", "review", "revise"].includes(action);
   if (
