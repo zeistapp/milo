@@ -111,6 +111,9 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       const invocation = await Bun.file(join(root, "invocation.json")).json();
       expect(invocation.input).toContain("Review this");
       expect(invocation.input).toContain("Do not commit");
+      expect(invocation.input).toContain(
+        "read the repository root AGENTS.md and CLAUDE.md",
+      );
       expect(invocation.input).toContain("senior full-stack developer");
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");
