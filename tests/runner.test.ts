@@ -6,14 +6,15 @@ import type { Config, Repo } from "../src/config.ts";
 import { command, temporary } from "../src/process.ts";
 import {
   changes,
+  finding,
   type GitHubClient,
   type Issue,
   latestRequests,
   mergeBlocker,
   type PullRequest,
+  periodKey,
   type Review,
   Runner,
-  ticketSpecs,
   validateIssue,
   validatePR,
 } from "../src/runner.ts";
@@ -28,37 +29,100 @@ function issue(body = "", state = "open"): Issue {
     labels: [{ name: "milo:task" }, { name: "milo:ready" }],
   };
 }
-test("weekly tickets deduplicate completed and outstanding work", () => {
-  const repo: Repo = { name: "owner/repo", categories: ["cleanup"] };
-  const date = new Date("2026-10-14T00:00:00Z");
-  expect(ticketSpecs(repo, [], date)[0]?.labels).toEqual([
-    "milo:task",
-    "milo:cleanup",
-  ]);
-  expect(
-    ticketSpecs(repo, [issue("<!-- milo:cleanup:2025-W01 -->")], date),
-  ).toEqual([]);
-  expect(
-    ticketSpecs(
-      repo,
-      [issue("<!-- milo:cleanup:2026-W42 -->", "closed")],
-      date,
-    ),
-  ).toEqual([]);
-  expect(
-    ticketSpecs(
-      repo,
-      [issue("<!-- milo:cleanup:2026-W41 -->", "closed")],
-      date,
-    ),
-  ).toHaveLength(1);
-  expect(ticketSpecs(repo, [], new Date("2021-01-01"))[0]?.body).toContain(
-    "2020-W53",
-  );
-  expect(
-    ticketSpecs({ ...repo, autoReady: ["cleanup"] }, [], date)[0]?.labels,
-  ).toContain("milo:ready");
+test("scan reports become a titled finding or nothing", () => {
+  expect(finding("Looked everywhere.\nVerdict: clean")).toBeUndefined();
+  expect(finding("**Title:** Bump hono\n\nEvidence: package.json:3")).toEqual({
+    title: "Bump hono",
+    body: "Evidence: package.json:3",
+  });
+  expect(() => finding("Some rambling report")).toThrow("verdict");
 });
+test("scans open one finding per category and period, and skip clean or outstanding ones", () =>
+  temporary("milo-scan-", async (folder) => {
+    const fakeAgent = join(folder, "agent.ts");
+    const calls = join(folder, "calls.txt");
+    await Bun.write(
+      fakeAgent,
+      `const prompt = await Bun.stdin.text();
+const log = Bun.file(${JSON.stringify(calls)});
+await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
+await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Verdict: clean");`,
+    );
+    const labels = new Map<string, string | null>();
+    const open: Issue[] = [];
+    const writes: [string, string, unknown][] = [];
+    const gh: GitHubClient = {
+      async api<T>(endpoint: string, method = "GET", payload?: unknown) {
+        writes.push([method, endpoint, payload]);
+        const body = payload as { name?: string; description?: string };
+        if (endpoint === "labels" && body.name) labels.set(body.name, null);
+        if (method === "PATCH")
+          labels.set(
+            decodeURIComponent(endpoint.slice(7)),
+            body.description ?? null,
+          );
+        return { html_url: "https://example.test/issue/1" } as T;
+      },
+      async pages<T>(endpoint: string): Promise<T[]> {
+        if (endpoint === "labels")
+          return [...labels].map(([name, description]) => ({
+            name,
+            description,
+          })) as T[];
+        return open as T[];
+      },
+      async comment() {},
+      async viewer() {
+        return "bot";
+      },
+    };
+    const runner = new Runner(
+      {
+        agent: { command: [process.execPath, fakeAgent, "{output}"] },
+        repos: [],
+      },
+      () => gh,
+      async (_repo, root) => {
+        await mkdir(root);
+        const git = (...args: string[]) =>
+          command(["git", ...args], { cwd: root });
+        await git("init", "-q");
+        await git("config", "user.name", "Test");
+        await git("config", "user.email", "test@example.test");
+        await Bun.write(join(root, "package.json"), "{}");
+        await git("add", ".");
+        await git("commit", "-qm", "Initial");
+      },
+    );
+    const repo: Repo = {
+      name: "owner/repo",
+      categories: ["security", "cleanup"],
+      autoReady: ["security"],
+      setup: [],
+      checks: [{ command: ["true"] }],
+    };
+    await runner.plan(repo, false, "day");
+    expect(writes).toEqual([]);
+    await runner.plan(repo, true, "day");
+    const issues = writes.filter(([, endpoint]) => endpoint === "issues");
+    expect(issues).toHaveLength(1);
+    const ticket = issues[0]?.[2] as {
+      title: string;
+      body: string;
+      labels: string[];
+    };
+    expect(ticket.title).toBe("Patch hono");
+    expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
+    expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
+    expect(labels.get("milo:cleanup")).toBe(`Milo scanned ${periodKey("day")}`);
+    // Repeat runs in the same period, and categories with an open ticket, call no agent.
+    const count = (await Bun.file(calls).text()).length;
+    await runner.plan(repo, true, "day");
+    labels.set("milo:security", null);
+    open.push({ ...issue(), labels: [{ name: "milo:security" }] });
+    await runner.plan(repo, true, "day");
+    expect((await Bun.file(calls).text()).length).toBe(count);
+  }));
 test("only approved tickets and same-repo Milo PRs may run", () => {
   validateIssue(issue());
   expect(() => validateIssue({ ...issue(), labels: [] })).toThrow();

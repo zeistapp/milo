@@ -115,48 +115,21 @@ function week(date: Date): string {
   const first = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
   return `${day.getUTCFullYear()}-W${String(Math.ceil(((+day - +first) / 86400000 + 1) / 7)).padStart(2, "0")}`;
 }
-export function ticketSpecs(
-  repo: Repo,
-  issues: Issue[],
-  today = new Date(),
-  period: Period = "week",
-) {
-  const key =
-    period === "week"
-      ? week(today)
-      : today.toISOString().slice(0, period === "day" ? 10 : 7);
-  return (repo.categories ?? (Object.keys(categories) as Category[])).flatMap(
-    (category) => {
-      const marker = `<!-- milo:${category}:${key} -->`;
-      const prefix = `<!-- milo:${category}:`;
-      if (
-        issues.some(
-          (issue) =>
-            !Object.hasOwn(issue, "pull_request") &&
-            ((issue.body ?? "").includes(marker) ||
-              (issue.state === "open" && (issue.body ?? "").includes(prefix))),
-        )
-      )
-        return [];
-      return [
-        {
-          title: `Maintenance: ${category} (${key})`,
-          labels: [
-            "milo:task",
-            `milo:${category}`,
-            ...(repo.autoReady?.includes(category) ? ["milo:ready"] : []),
-          ],
-          body:
-            `${marker}\n\n${categories[category]}\n\nAcceptance criteria:\n- Record evidenced findings or explain why no change is needed.\n` +
-            "- Preserve the framework, runtime, build patterns and existing behaviour.\n- Pass repository checks.\n- Open a scoped PR with evidence and limitations.\n\n" +
-            "Add `milo:ready` to authorise execution." +
-            (repo.autoMerge?.includes(category)
-              ? " Milo may merge a minor, reviewed PR after CI passes."
-              : " Milo never merges this category."),
-        },
-      ];
-    },
-  );
+export function periodKey(period: Period, today = new Date()): string {
+  return period === "week"
+    ? week(today)
+    : today.toISOString().slice(0, period === "day" ? 10 : 7);
+}
+// The category label's description records the last scan, so clean scans leave no issue behind.
+const scannedNote = (key: string) => `Milo scanned ${key}`;
+export function finding(
+  report: string,
+): { title: string; body: string } | undefined {
+  if (/(?:^|\n)\s*verdict:\s*clean\s*$/i.test(report)) return;
+  const [first = "", ...rest] = report.split("\n");
+  const title = /^(?:\*\*)?title:(?:\*\*)?\s*(.+)$/i.exec(first.trim())?.[1];
+  if (!title) throw new Error("Scan report has neither a title nor a verdict");
+  return { title: title.trim().slice(0, 200), body: rest.join("\n").trim() };
 }
 export function issueCategory(issue: Issue): Category | undefined {
   const matches = (Object.keys(categories) as Category[]).filter(
@@ -382,31 +355,85 @@ export class Runner {
     period: Period = "week",
   ): Promise<void> {
     const gh = this.github(repo);
-    const specs = ticketSpecs(
-      repo,
-      await gh.pages<Issue>("issues?state=all"),
-      new Date(),
-      period,
+    const key = periodKey(period);
+    const selected = repo.categories ?? (Object.keys(categories) as Category[]);
+    const existing = new Map(
+      (
+        await gh.pages<{ name: string; description: string | null }>("labels")
+      ).map((label) => [label.name, label.description]),
     );
-    if (!apply) {
-      console.log(
-        JSON.stringify({ repository: repo.name, tickets: specs }, null, 2),
+    if (apply) {
+      const taskLabels = Object.fromEntries(
+        selected.map((category) => [`milo:${category}`, "64748b"]),
       );
-      return;
+      for (const [name, color] of Object.entries({ ...labels, ...taskLabels }))
+        if (!existing.has(name))
+          await gh.api("labels", "POST", { name, color });
     }
-    const existing = new Set(
-      (await gh.pages<{ name: string }>("labels")).map((label) => label.name),
+    const open = (await gh.pages<Issue>("issues?state=open")).filter(
+      (issue) => !Object.hasOwn(issue, "pull_request"),
     );
-    const taskLabels = Object.fromEntries(
-      (repo.categories ?? Object.keys(categories)).map((category) => [
-        `milo:${category}`,
-        "64748b",
-      ]),
-    );
-    for (const [name, color] of Object.entries({ ...labels, ...taskLabels }))
-      if (!existing.has(name)) await gh.api("labels", "POST", { name, color });
-    for (const spec of specs)
-      console.log((await gh.api<Issue>("issues", "POST", spec)).html_url);
+    for (const category of selected) {
+      const label = `milo:${category}`;
+      // One outstanding ticket per category: triage or finish it before Milo looks again.
+      if (
+        existing.get(label) === scannedNote(key) ||
+        open.some((issue) => issueCategory(issue) === category)
+      )
+        continue;
+      const found = await this.scan(repo, category);
+      if (!apply) {
+        console.log(
+          JSON.stringify({ repository: repo.name, category, found }, null, 2),
+        );
+        continue;
+      }
+      if (found)
+        console.log(
+          (
+            await gh.api<Issue>("issues", "POST", {
+              title: found.title,
+              labels: [
+                "milo:task",
+                label,
+                ...(repo.autoReady?.includes(category) ? ["milo:ready"] : []),
+              ],
+              body:
+                `<!-- milo:${category}:${key} -->\n\n${found.body}\n\n` +
+                "Add `milo:ready` to authorise execution." +
+                (repo.autoMerge?.includes(category)
+                  ? " Milo may merge a minor, reviewed PR after CI passes."
+                  : " Milo never merges this category."),
+            })
+          ).html_url,
+        );
+      else console.log(`${repo.name}: ${category} scan found nothing`);
+      await gh.api(`labels/${encodeURIComponent(label)}`, "PATCH", {
+        description: scannedNote(key),
+      });
+    }
+  }
+  private async scan(
+    repo: Repo,
+    category: Category,
+  ): Promise<{ title: string; body: string } | undefined> {
+    return temporary("milo-scan-", async (folder) => {
+      const root = join(folder, "repo");
+      await this.cloneRepo(repo, root);
+      const report = await runAgent(
+        this.config,
+        root,
+        `Scan this repository for ${category} work. Do not edit files. Area: ${categories[category]}\n` +
+          "Report only the single most valuable change, backed by evidence with file locations. Skip speculative or cosmetic findings.\n" +
+          "If nothing is worth changing, end with exactly one line: `Verdict: clean`.\n" +
+          "Otherwise make the first line exactly `Title: <short imperative summary>`, then give the evidence, the proposed change and acceptance criteria.\n" +
+          projectContext(await inspectProject(root, repo)),
+        true,
+      );
+      if (await command(["git", "status", "--porcelain"], { cwd: root }))
+        throw new Error("Read-only scan changed files");
+      return finding(report);
+    });
   }
   private async prepare(repo: Repo, root: string): Promise<Project> {
     const project = await inspectProject(root, repo);
@@ -797,7 +824,6 @@ export class Runner {
     if (category && repo.categories && !repo.categories.includes(category))
       throw new Error("Category is disabled for this repository");
     const scoped = category ? { ...repo, categories: [category] } : repo;
-    await this.plan(scoped, true, period);
     const gh = this.github(repo);
     for (const issue of (
       await gh.pages<Issue>("issues?state=open&labels=milo:ready")
@@ -820,6 +846,8 @@ export class Runner {
       await this.work(repo, issue.number, category);
       break;
     }
+    // Work first, so a failing scan cannot starve approved tickets.
+    await this.plan(scoped, true, period);
   }
   async runReviews(repo: Repo): Promise<void> {
     const gh = this.github(repo);

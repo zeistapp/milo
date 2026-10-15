@@ -10,8 +10,8 @@ import { command, temporary } from "../src/process.ts";
 import {
   type GitHubClient,
   type Issue,
+  periodKey,
   Runner,
-  ticketSpecs,
 } from "../src/runner.ts";
 
 const config: Config = { agent: { command: ["agent", "{output}"] }, repos: [] };
@@ -28,25 +28,11 @@ const ticket = (number: number, category: string): Issue => ({
     { name: `milo:${category}` },
   ],
 });
-test("daily and monthly runners deduplicate at their actual cadence", () => {
-  const selected: Repo = { ...repo, categories: ["security"] };
-  const date = new Date("2026-10-14");
-  const completed = {
-    ...ticket(1, "security"),
-    state: "closed",
-    body: "<!-- milo:security:2026-10-14 -->",
-  };
-  expect(ticketSpecs(selected, [completed], date, "day")).toHaveLength(0);
-  expect(
-    ticketSpecs(selected, [completed], new Date("2026-10-15"), "day"),
-  ).toHaveLength(1);
-  const monthly = { ...completed, body: "<!-- milo:security:2026-10 -->" };
-  expect(
-    ticketSpecs(selected, [monthly], new Date("2026-10-31"), "month"),
-  ).toHaveLength(0);
-  expect(
-    ticketSpecs(selected, [monthly], new Date("2026-11-01"), "month"),
-  ).toHaveLength(1);
+test("daily, weekly and monthly scans deduplicate at their actual cadence", () => {
+  expect(periodKey("day", new Date("2026-10-14"))).toBe("2026-10-14");
+  expect(periodKey("week", new Date("2026-10-14"))).toBe("2026-W42");
+  expect(periodKey("week", new Date("2021-01-01"))).toBe("2020-W53");
+  expect(periodKey("month", new Date("2026-10-31"))).toBe("2026-10");
 });
 test("a dedicated task runner cannot consume another category or run reviews", async () => {
   const issues = [ticket(1, "security"), ticket(2, "dependencies")];
