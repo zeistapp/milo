@@ -172,6 +172,12 @@ describe("framework-independent validation", () => {
           checks: [{ command: ["true"], cwd: "outside" }],
         }),
       ).rejects.toThrow("escapes");
+      await expect(
+        inspectProject(root, {
+          setup: [],
+          checks: [{ command: ["true"], cwd: ".." }],
+        }),
+      ).rejects.toThrow("escapes");
     }));
   test("TypeScript gaps are reported without inventing commands", () =>
     temporary("milo-profile-", async (root) => {

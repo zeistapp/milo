@@ -265,7 +265,7 @@ const counter = Bun.file(${JSON.stringify(invocations)});
 await Bun.write(counter, String((await counter.exists() ? Number(await counter.text()) : 0) + 1));
 if (prompt.includes("Implement this ticket:")) await Bun.write("file.txt", "new\\n");
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
-await Bun.write(Bun.argv[2]!, "Report with evidence");`,
+await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       );
       const config: Config = {
         agent: { command: [process.execPath, fakeAgent, "{output}"] },
@@ -273,6 +273,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence");`,
       };
       const repo: Repo = {
         name: "owner/repo",
+        autoMerge: ["dependencies"],
         setup: [],
         checks: [
           {
@@ -294,7 +295,8 @@ await Bun.write(Bun.argv[2]!, "Report with evidence");`,
           payload?: unknown,
         ): Promise<T> {
           let result: unknown;
-          if (endpoint === "issues/12") result = issue();
+          if (endpoint === "issues/12")
+            result = issue("<!-- milo:dependencies:key -->");
           else if (endpoint === "issues/13")
             result = { ...issue(), number: 13 };
           else if (endpoint === "issues/13/labels") result = {};
@@ -366,7 +368,12 @@ await Bun.write(Bun.argv[2]!, "Report with evidence");`,
       });
       await runner.review(repo, 34);
       expect(
-        comments.some((comment) => comment.body.includes("Automated review")),
+        comments.some(
+          (comment) =>
+            comment.body.startsWith(
+              `<!-- milo:review:${originalHead} --><!-- milo:merge -->`,
+            ) && comment.body.includes("Automated review"),
+        ),
       ).toBeTrue();
       const count = comments.length;
       await runner.review(repo, 34);
@@ -435,6 +442,10 @@ test("auto-merge blocks majors, dependency changes and large diffs", () =>
       expect(await mergeBlocker(root, base)).toContain(reason);
     }
     await git("checkout", "-q", "--detach", base);
+    await Bun.write(join(root, "big.ts"), "x\n".repeat(300));
+    await commit();
+    expect(await mergeBlocker(root, base)).toBeUndefined();
+    await git("checkout", "-q", "--detach", base);
     await Bun.write(join(root, "big.ts"), "x\n".repeat(301));
     await commit();
     expect(await mergeBlocker(root, base)).toBe("301 changed lines");
@@ -458,6 +469,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     base: { ref: "main", sha: "base" },
   };
   let runs = [{ status: "in_progress", conclusion: null as string | null }];
+  let status = { state: "pending", total_count: 0 };
   let behind = 0;
   let reviews: Review[] = [];
   let comment = "<!-- milo:review:abc --><!-- milo:merge -->\n\nreport";
@@ -468,7 +480,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
       const responses: Record<string, unknown> = {
         "issues/12": { ...issue(), labels: [{ name: "milo:dependencies" }] },
         "commits/abc/check-runs?per_page=100": { check_runs: runs },
-        "commits/abc/status": { state: "pending", total_count: 0 },
+        "commits/abc/status": status,
         "compare/main...abc": { behind_by: behind },
       };
       return (responses[endpoint] ?? {}) as T;
@@ -517,4 +529,15 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   comment = "<!-- milo:review:abc --><!-- milo:merge -->";
   await runner.runReviews(repo);
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
+  writes.length = 0;
+  runs = [{ status: "completed", conclusion: "failure" }];
+  await runner.runReviews(repo);
+  runs = [];
+  await runner.runReviews(repo);
+  status = { state: "failure", total_count: 1 };
+  await runner.runReviews(repo);
+  expect(writes).toEqual([]);
+  status = { state: "success", total_count: 1 };
+  await runner.runReviews(repo);
+  expect(writes).toEqual(["pulls/34/merge"]);
 });
