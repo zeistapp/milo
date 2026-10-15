@@ -3,7 +3,7 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { parseConfig } from "../src/config.ts";
 import { temporary } from "../src/process.ts";
-import { inspectProject } from "../src/project.ts";
+import { inspectProject, projectContext } from "../src/project.ts";
 
 async function manifest(
   root: string,
@@ -139,8 +139,10 @@ describe("framework-independent validation", () => {
       await manifest(root, {}, { dev: "vite" });
       await Bun.write(join(root, "bun.lock"), "fixture");
       await expect(inspectProject(root)).rejects.toThrow("No runnable checks");
-      await manifest(root, {}, { test: "vitest --watch" });
-      await expect(inspectProject(root)).rejects.toThrow("interactive");
+      for (const test of ["vitest --watch", "vitest --watch src"]) {
+        await manifest(root, {}, { test });
+        await expect(inspectProject(root)).rejects.toThrow("interactive");
+      }
     }));
   test("Vitest tests run once with correct npm argument forwarding", () =>
     temporary("milo-profile-", async (root) => {
@@ -161,6 +163,7 @@ describe("framework-independent validation", () => {
         checks: [{ command: ["bun", "check.js"] }],
       });
       expect(project.packages).toEqual([]);
+      expect(project.packageManager).toBe("configured");
       expect(project.checks[0]?.command).toEqual(["bun", "check.js"]);
     }));
   test("symlinked command cwd cannot escape the repository", () =>
@@ -222,14 +225,17 @@ test("configuration validates categories, checks and command boundaries", () => 
   ).toThrow("unknown");
 });
 describe("project profiling edge cases", () => {
-  const inspect = (files: Record<string, unknown>) =>
+  const inspect = (
+    files: Record<string, unknown>,
+    repo?: Parameters<typeof inspectProject>[1],
+  ) =>
     temporary("milo-profile-", async (root) => {
       for (const [path, content] of Object.entries(files))
         await Bun.write(
           join(root, path),
           typeof content === "string" ? content : JSON.stringify(content),
         );
-      return inspectProject(root);
+      return inspectProject(root, repo);
     });
   const scripts = { test: "test" };
   test("generated and dependency directories are not profiled", async () => {
@@ -264,6 +270,71 @@ describe("project profiling edge cases", () => {
       await expect(
         inspect({ "package.json": { scripts: value }, "bun.lock": "" }),
       ).rejects.toThrow("Invalid scripts");
+    for (const field of ["dependencies", "devDependencies", "peerDependencies"])
+      await expect(
+        inspect({
+          "package.json": { scripts, [field]: { x: 1 } },
+          "bun.lock": "",
+        }),
+      ).rejects.toThrow(`Invalid ${field}`);
+  });
+  test("unnamed packages use their directory and unknown dependencies add no tools", async () => {
+    const [pkg] = (
+      await inspect({
+        "package.json": { scripts, dependencies: { "left-pad": "1" } },
+        "bun.lock": "",
+      })
+    ).packages;
+    expect(pkg?.name).toBe(".");
+    expect(pkg?.tools).toEqual([]);
+  });
+  test("CI script variants are preferred and satisfy check warnings", async () => {
+    const checks = async (scripts: Record<string, string>) => {
+      const project = await inspect({
+        "package.json": { scripts },
+        "bun.lock": "",
+        "tsconfig.json": "{}",
+      });
+      expect(project.warnings).toEqual([]);
+      return project.checks.map((step) => step.command[2]);
+    };
+    expect(
+      await checks({ "type-check": "t", check: "c", "test:ci": "t" }),
+    ).toEqual(["type-check", "check", "test:ci"]);
+    expect(
+      await checks({
+        "check:types": "t",
+        "check:ci": "c",
+        lint: "l",
+        "lint:ci": "l",
+        test: "t",
+        "test:ci": "t",
+        build: "b",
+        "build:ci": "b",
+      }),
+    ).toEqual(["check:types", "check:ci", "lint:ci", "test:ci", "build:ci"]);
+  });
+  test("partial explicit commands still need a package and lockfile", async () => {
+    await expect(inspect({}, { setup: [] })).rejects.toThrow(
+      "No package.json found",
+    );
+    const project = await inspect(
+      { "package.json": { scripts }, "bun.lock": "" },
+      { setup: [] },
+    );
+    expect(project.packageManager).toBe("bun");
+    expect(project.checks[0]?.command).toEqual(["bun", "run", "test"]);
+  });
+  test("agent context embeds the detected profile", async () => {
+    const project = await inspect({
+      "package.json": { scripts, dependencies: { hono: "4" } },
+      "bun.lock": "",
+    });
+    const { packages, warnings, checks } = project;
+    const context = projectContext(project);
+    expect(context).toStartWith("Repository profile");
+    expect(context).toContain(JSON.stringify({ packages, warnings, checks }));
+    expect(context).toContain("Do not invent framework APIs");
   });
   test("package patterns and TypeScript are detected for agent context", async () => {
     const patterns = async (manifest: object) =>
@@ -282,12 +353,12 @@ describe("project profiling edge cases", () => {
     expect(await patterns({ devDependencies: { nx: "20" } })).toEqual([
       "task graph",
     ]);
-    expect(await patterns({ scripts: { test: "node test.js" } })).toEqual([
-      "runtime scripts",
-    ]);
-    expect(await patterns({ scripts: { test: "vite build --ssr" } })).toEqual([
-      "SSR build",
-    ]);
+    expect(
+      await patterns({ scripts: { test: "node test.js", build: "x" } }),
+    ).toEqual(["runtime scripts"]);
+    expect(
+      await patterns({ scripts: { test: "t", build: "vite build --ssr" } }),
+    ).toEqual(["SSR build"]);
     expect(await patterns({})).toEqual([]);
     const typed = await inspect({
       "package.json": { scripts },
