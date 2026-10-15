@@ -1,0 +1,24 @@
+name: Mutation testing
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stryker:
+    runs-on: ubuntu-latest
+    # A local full run took 28 minutes on 10 cores; hosted runners have 4.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.3'
+      - run: bun install --frozen-lockfile
+      - run: bun run mutate
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation/

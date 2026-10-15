@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "mutate": ["src/**/*.ts"],
+  "testRunner": "command",
+  "commandRunner": { "command": "bun test" },
+  "coverageAnalysis": "off",
+  "tsconfigFile": "",
+  "incremental": true,
+  "reporters": ["clear-text", "html", "progress"]
+}
