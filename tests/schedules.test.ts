@@ -193,6 +193,9 @@ test("a shared schedule skips categories a repo has disabled", () =>
     );
     await main(["--config", file, "--category", "cleanup", "task"]);
     await expect(
+      main(["--config", file, "--category", "cleanup", "plan"]),
+    ).rejects.toThrow("No configured repositories matched");
+    await expect(
       main([
         "--config",
         file,
