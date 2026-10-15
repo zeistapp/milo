@@ -258,6 +258,7 @@ test(
       const head = () => git(remote, "rev-parse", "refs/heads/milo/issue-12");
       const fakeAgent = join(folder, "agent.ts");
       const invocations = join(folder, "invocations.txt");
+      const reviewPrompt = join(folder, "review-prompt.txt");
       await Bun.write(
         fakeAgent,
         `const prompt = await Bun.stdin.text();
@@ -265,6 +266,7 @@ const counter = Bun.file(${JSON.stringify(invocations)});
 await Bun.write(counter, String((await counter.exists() ? Number(await counter.text()) : 0) + 1));
 if (prompt.includes("Implement this ticket:")) await Bun.write("file.txt", "new\\n");
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
+if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
 await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       );
       const config: Config = {
@@ -288,6 +290,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       const comments: { body: string; user: { login: string } }[] = [];
       const reviews: Review[] = [];
       const prs: PullRequest[] = [];
+      let ticketReads = 0;
       const gh: GitHubClient = {
         async api<T>(
           endpoint: string,
@@ -299,7 +302,9 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
             result = issue("<!-- milo:dependencies:key -->");
           else if (endpoint === "issues/13")
             result = { ...issue(), number: 13 };
-          else if (endpoint === "issues/13/labels") result = {};
+          else if (endpoint === "issues/14")
+            result = { ...issue(`edit ${++ticketReads}`), number: 14 };
+          else if (endpoint.match(/^issues\/1[34]\/labels$/)) result = {};
           else if (endpoint === "pulls" && method === "POST") {
             const body = payload as { body: string };
             const sha = await head();
@@ -375,6 +380,10 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
             ) && comment.body.includes("Automated review"),
         ),
       ).toBeTrue();
+      // The reviewer judges scope against the approved ticket, not the PR description.
+      expect(await Bun.file(reviewPrompt).text()).toContain(
+        "<!-- milo:dependencies:key -->",
+      );
       const count = comments.length;
       await runner.review(repo, 34);
       expect(comments).toHaveLength(count);
@@ -406,6 +415,9 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
         ),
       ).rejects.toThrow("failed");
       expect(await Bun.file(invocations).text()).toBe(calls);
+      // An edit during the run stops it before anything is pushed.
+      await expect(runner.work(repo, 14)).rejects.toThrow("Ticket changed");
+      expect(await git(remote, "branch", "--list", "milo/issue-14")).toBe("");
     }),
   15_000,
 );
