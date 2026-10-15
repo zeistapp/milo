@@ -76,7 +76,7 @@ test("provider subprocesses forward prompts and models, save reports and reject 
 const args = Bun.argv.slice(2);
 if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '2.1.296 (Claude Code)'); process.exit(0); }
 const input = await Bun.stdin.text();
-await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY}));
+await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY,claudeMd:process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD}));
 if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Codex report');
 else if (process.env.MILO_TEST_RESULT === 'exit') process.exit(1);
 else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Claude report'}));
@@ -114,6 +114,7 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       expect(invocation.input).toContain("senior full-stack developer");
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");
+      expect(invocation.claudeMd).toBe("1");
       expect(invocation.args.slice(-2)).toEqual(["--model", "exact-model"]);
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",

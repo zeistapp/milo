@@ -12,12 +12,13 @@ export interface CommandOptions {
   trusted?: boolean;
   keepAgentCredentials?: boolean;
   logFile?: string;
+  env?: Record<string, string>;
 }
 export async function command(
   argv: Argv,
   options: CommandOptions = {},
 ): Promise<string> {
-  const env = { ...process.env };
+  const env = { ...process.env, ...options.env };
   if (options.trusted === false) {
     for (const key of [
       "GH_TOKEN",

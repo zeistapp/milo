@@ -95,6 +95,8 @@ export async function runClaude(
   const stdout = await command(claudeCommand(root, readOnly, model), {
     ...options,
     input,
+    // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
+    env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" },
   });
   let result: unknown;
   try {
