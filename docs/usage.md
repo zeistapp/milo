@@ -2,7 +2,7 @@
 
 Milo maintains JavaScript and TypeScript repos through GitHub tickets and reviewed pull requests. It runs on Bun, locally or in GitHub Actions. No server or local daemon is required.
 
-Separate runners cover dependencies, security, architecture, cleanup, organisation, performance, modernisation and PR reviews. Every agent call receives the shared guidelines in `src/guidelines.txt` (a senior full-stack developer persona plus coding and writing standards) ahead of the harness policy. Add `milo:ready` to approve a ticket. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The review runner checks each PR commit and addresses a repository writer's **Changes requested** review. Humans merge, except for categories you list in `autoMerge`.
+Separate runners cover dependencies, security, architecture, cleanup, organisation, performance, modernisation and PR reviews. Every agent call receives the shared guidelines in `src/guidelines.txt` (a senior full-stack developer persona plus coding and writing standards) ahead of the harness policy. Each runner first works the oldest approved ticket in its category, then scans read-only. A scan that finds nothing leaves no issue; a finding becomes an issue with evidence and acceptance criteria. Add `milo:ready` to approve it. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The review runner checks each PR commit and addresses a repository writer's **Changes requested** review. Humans merge, except for categories you list in `autoMerge`.
 
 ## Your frameworks and build patterns
 
@@ -37,8 +37,8 @@ bun run milo validate
 bun run milo inspect /path/to/project  # Show detected packages/checks, no execution
 bun run milo check /path/to/disposable-checkout --report-dir .milo/runs/local
 gh auth login
-bun run milo plan                     # Preview tickets, no writes or agent calls
-bun run milo plan --apply
+bun run milo plan                     # Scan and print findings, no GitHub writes
+bun run milo plan --apply             # Scan and open issues for findings
 bun run milo --repo owner/repo work 12
 bun run milo --repo owner/repo review 34
 bun run milo --repo owner/repo revise 34
@@ -99,7 +99,7 @@ Existing `agent.command` configs still work for custom agents. Choose either `pr
 
 ## Host and distribute
 
-Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY` plus a fine-grained `MILO_GITHUB_TOKEN` scoped to this repo. Give the token Contents, Issues and Pull requests write permissions, and Metadata read access. Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to create initial tickets, then add `milo:ready` to approve work. Scheduled runners keep creating tickets at their configured intervals; `autoReady: []` requires approval before agent edits.
+Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY` plus a fine-grained `MILO_GITHUB_TOKEN` scoped to this repo. Give the token Contents, Issues and Pull requests write permissions, and Metadata read access. Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan every category, then add `milo:ready` to the findings you want worked. Scheduled runners scan again at their configured intervals; `autoReady: []` requires approval before agent edits.
 
 Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `OPENAI_API_KEY` as secrets, plus an exact tested `CODEX_VERSION` as an environment variable. For Claude, use `ANTHROPIC_API_KEY` instead and change the config provider; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. GitHub App installation tokens need additional bot identity handling and are not supported yet. The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
@@ -116,7 +116,7 @@ Consumers and Milo itself use the same two-line `milo.yml` caller, which runs ev
 | Performance | Friday |
 | Organisation | Saturday |
 
-Weekly tasks run in the same 02:00 to 05:59 window, which catches two runs; weekly ticket dedupe makes the second a no-op. A manual run starts every task. Tasks a repo excludes through `categories` are skipped. Runs of the same category are serialised; different categories run in parallel on their own branches. Reviews share one concurrency group. The Manual maintenance workflow supports targeted tasks and individual issue/PR operations. To keep your own cron and periods instead, call `zeistapp/milo/.github/workflows/maintenance.yml@main` from your own workflows with `action`, `category` and `period`; those copies don't receive schedule changes.
+Weekly tasks run in the same 02:00 to 05:59 window, which catches two runs; the category label's description records the last scan (`Milo scanned 2026-W42`), so the second run skips it. Milo also skips a category's scan while it has an open ticket, so triage or close findings to keep scans running. A manual run starts every task. Tasks a repo excludes through `categories` are skipped. Runs of the same category are serialised; different categories run in parallel on their own branches. Reviews share one concurrency group. The Manual maintenance workflow supports targeted tasks and individual issue/PR operations. To keep your own cron and periods instead, call `zeistapp/milo/.github/workflows/maintenance.yml@main` from your own workflows with `action`, `category` and `period`; those copies don't receive schedule changes.
 
 Other users can invoke this [composite action](https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action) using `zeistapp/milo@main`, after checking out their config. This automatically follows updates to Milo's main branch. For a dedicated runner, pass `action: task`, `category`, `period`, a pinned `codex-version`, and `GH_TOKEN`/`CODEX_API_KEY` through the step environment. Use `action: reviews` for the review queue. Use `claude-version` and `ANTHROPIC_API_KEY` for the built-in Claude adapter. Omit both installation inputs when supplying an installed custom agent. There are no production npm dependencies. Linux and macOS are supported; Windows is not supported yet.
 

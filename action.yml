@@ -12,7 +12,7 @@ inputs:
   number:
     description: Issue or PR number for work, review, or revise
   apply:
-    description: Create tickets when action is plan
+    description: Open issues for scan findings when action is plan
     default: 'false'
   codex-version:
     description: Exact Codex CLI version to install; omit if supplying an agent yourself
@@ -21,7 +21,7 @@ inputs:
   category:
     description: Maintenance category for a dedicated task runner
   period:
-    description: Ticket deduplication period, day, week, or month
+    description: Scan deduplication period, day, week, or month
     default: week
   self-repo:
     description: Add this owner/repository to the maintenance targets

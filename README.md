@@ -1,6 +1,6 @@
 # Milo
 
-Milo maintains JavaScript and TypeScript repos through GitHub issues and pull requests. You approve tickets; Milo makes changes and runs your checks; you review and merge.
+Milo maintains JavaScript and TypeScript repos through GitHub issues and pull requests. Milo scans your code and opens an issue only when it finds something worth changing. You approve it; Milo makes the change and runs your checks; you review and merge.
 
 It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, React, Next.js, Hono and other tools work through your existing package scripts.
 
@@ -41,7 +41,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-4. Commit both files to your default branch and run the workflow. Approve a generated issue by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
+4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run of that category picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
 Every run reviews open Milo PRs. Between 02:00 and 05:59 UTC it also runs security daily and one weekly task: dependencies Monday, architecture Tuesday, cleanup Wednesday, modernisation Thursday, performance Friday and organisation Saturday. A manual run starts every task. Limit tasks with `categories` in your config.
 
