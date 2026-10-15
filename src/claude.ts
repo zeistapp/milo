@@ -10,12 +10,13 @@ export function claudeCommand(
   readOnly: boolean,
   model?: string,
 ): Argv {
-  const tools = ["Read", "Glob", "Grep", "WebFetch", "WebSearch"];
-  if (!readOnly) tools.push("Edit", "Write", "Bash");
+  // Read-only runs keep a sandboxed shell for searching, git history and registry lookups.
+  const tools = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "Bash"];
+  if (!readOnly) tools.push("Edit", "Write");
   const settings = {
     env: { DISABLE_UPDATES: "1" },
     sandbox: {
-      enabled: !readOnly,
+      enabled: true,
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: true,
       allowUnsandboxedCommands: false,
@@ -30,11 +31,9 @@ export function claudeCommand(
         ].map((name) => ({ name, mode: "deny" })),
       },
       filesystem: {
-        denyWrite: [
-          join(root, ".git"),
-          join(root, ".github"),
-          join(root, ".milo"),
-        ],
+        denyWrite: readOnly
+          ? [root]
+          : [join(root, ".git"), join(root, ".github"), join(root, ".milo")],
         denyRead: ["~/.ssh", "~/.aws", "~/.config/gh", "~/.codex", "~/.claude"],
       },
       network: { allowedDomains: ["registry.npmjs.org"] },
@@ -45,6 +44,9 @@ export function claudeCommand(
     "--bare",
     "--restricted",
     "--print",
+    // Bare mode skips CLAUDE.md discovery; --add-dir restores it for the repository.
+    "--add-dir",
+    root,
     "--no-session-persistence",
     "--disable-slash-commands",
     "--no-chrome",

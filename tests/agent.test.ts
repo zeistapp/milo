@@ -34,19 +34,26 @@ test("provider configuration validates model selection and preserves custom agen
   ).toEqual(["cli", "{output}"]);
 });
 
-test("Claude reviews expose no write or command tools; edits require a shell sandbox", () => {
+test("Claude reviews get a sandboxed shell but no writes; edits require a shell sandbox", () => {
   const readonly = claudeCommand("/repo", true);
   expect(readonly[readonly.indexOf("--tools") + 1]).toBe(
-    "Read,Glob,Grep,WebFetch,WebSearch",
+    "Read,Glob,Grep,WebFetch,WebSearch,Bash",
   );
+  const readonlySettings = JSON.parse(
+    readonly[readonly.indexOf("--settings") + 1] ?? "{}",
+  );
+  expect(readonlySettings.sandbox.enabled).toBe(true);
+  expect(readonlySettings.sandbox.filesystem.denyWrite).toEqual(["/repo"]);
   const editing = claudeCommand("/repo", false, "exact-model");
   expect(editing.slice(-2)).toEqual(["--model", "exact-model"]);
   expect(editing[editing.indexOf("--allowedTools") + 1]).toContain("Bash");
   expect(readonly[readonly.indexOf("--allowedTools") + 1]).not.toContain(
-    "Bash",
+    "Edit",
   );
   expect(editing).not.toContain("--dangerously-skip-permissions");
   expect(editing).toContain("--restricted");
+  for (const argv of [readonly, editing])
+    expect(argv[argv.indexOf("--add-dir") + 1]).toBe("/repo");
   const settings = JSON.parse(
     editing[editing.indexOf("--settings") + 1] ?? "{}",
   );

@@ -541,3 +541,24 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   await runner.runReviews(repo);
   expect(writes).toEqual(["pulls/34/merge"]);
 });
+
+test("tasks cannot change agent instruction files", () =>
+  temporary("milo-protected-", async (root) => {
+    await command(["git", "init", "--quiet"], { cwd: root });
+    for (const file of [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "app/CLAUDE.md",
+      ".claude/rules/a.md",
+    ]) {
+      await mkdir(join(root, file, ".."), { recursive: true });
+      await Bun.write(join(root, file), "changed policy");
+      await expect(changes(root)).rejects.toThrow("protected");
+      await command(["git", "rm", "--cached", "--quiet", "-r", "."], {
+        cwd: root,
+      });
+      await command(["git", "clean", "-fdq"], { cwd: root });
+    }
+    await Bun.write(join(root, "src.ts"), "ok");
+    expect(await changes(root)).toBe(true);
+  }));
