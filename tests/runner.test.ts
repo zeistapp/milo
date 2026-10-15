@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config, Repo } from "../src/config.ts";
 import { command, temporary } from "../src/process.ts";
@@ -230,6 +230,42 @@ test("child processes lose GitHub credentials and time out", async () => {
     ]),
   ).rejects.not.toThrow("private-value");
 });
+
+test("untrusted steps cannot read Milo's token or write outside the clone", () =>
+  temporary("milo-confine-", async (temp) => {
+    const folder = await realpath(temp);
+    const root = join(folder, "repo");
+    const home = join(folder, "home");
+    await mkdir(join(root, ".git"), { recursive: true });
+    await mkdir(home);
+    const probe = join(home, "probe.ts");
+    const outside = join(folder, "outside");
+    await Bun.write(
+      probe,
+      `import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+let leaked = false;
+if (process.platform === "linux")
+  for (const pid of readdirSync("/proc"))
+    try { leaked ||= readFileSync(\`/proc/\${pid}/environ\`, "utf8").includes("test-secret"); } catch {}
+else
+  try { leaked = Bun.spawnSync(["ps", "eww", "-A"]).stdout.toString().includes("test-secret"); } catch {}
+for (const path of ["file", ".git/config", ${JSON.stringify(outside)}])
+  try { writeFileSync(path, "x"); } catch {}
+console.log(JSON.stringify({ leaked, home: process.env.HOME }));`,
+    );
+    // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
+    const milo = `import { command, confine } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
+console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
+  { cwd: ${JSON.stringify(root)}, trusted: false, env: { HOME: ${JSON.stringify(home)}, TMPDIR: ${JSON.stringify(home)} } }));`;
+    const output = await command([process.execPath, "-e", milo], {
+      env: { GH_TOKEN: "test-secret" },
+    });
+    expect(JSON.parse(output)).toEqual({ leaked: false, home });
+    // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
+    expect(await Bun.file(join(root, "file")).exists()).toBeTrue();
+    expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();
+    expect(await Bun.file(outside).exists()).toBeFalse();
+  }));
 
 test(
   "real git and subprocess flow: ticket, PR, review, revision and retry deduplication",

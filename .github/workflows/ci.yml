@@ -30,11 +30,8 @@ jobs:
         with:
           bun-version: '1.4.3'
       - run: bun install --frozen-lockfile
-      - run: bun run lint:ci
-      - run: bun run typecheck
-      - run: bun test
-      - run: bun run build
       # Consumers on @main run this install path next, so exercise it before any merge.
+      # It runs first because it installs the sandbox the tests' setup and check steps need.
       - name: Validate reusable action
         uses: ./
         with:
@@ -42,4 +39,8 @@ jobs:
           config: examples/ecosystem.json
           self-repo: ${{ github.repository }}
           claude-version: '2.1.296'
+      - run: bun run lint:ci
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
       - run: claude --version && cd "$RUNNER_TEMP" && pnpm --version && yarn --version
