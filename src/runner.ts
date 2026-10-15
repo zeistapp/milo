@@ -261,8 +261,8 @@ async function steps(commands: Step[], root: string): Promise<void> {
 export async function clone(repo: Repo, root: string): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
   for (const [key, value] of [
-    ["user.name", "milo"],
-    ["user.email", "milo@users.noreply.github.com"],
+    ["user.name", "github-actions[bot]"],
+    ["user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
     ["core.hooksPath", "/dev/null"],
     ["credential.helper", "!gh auth git-credential"],
   ] as const) {
