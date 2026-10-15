@@ -4,6 +4,7 @@
   "testRunner": "command",
   "commandRunner": { "command": "bun test" },
   "coverageAnalysis": "off",
+  "timeoutMS": 30000,
   "tsconfigFile": "",
   "incremental": true,
   "reporters": ["clear-text", "html", "progress"]

@@ -148,6 +148,11 @@ test("invalid commands fail before the runner starts", async () => {
   expect(calls()).toEqual({});
 });
 
+test("--help prints usage without loading config or running", async () => {
+  await main(["--config", "missing.json", "--help", "tick"]);
+  expect(log.mock.calls[0]?.[0]).toStartWith("Milo: bun run milo");
+  expect(calls()).toEqual({});
+});
 test("the default config file is milo.config.json", async () => {
   await main(["validate"]);
   expect(log).toHaveBeenCalledWith("Configuration valid");
@@ -188,7 +193,13 @@ test("check runs the configured repo's checks and fails when they fail", () =>
               name: "owner/a",
               setup: [],
               checks: [
-                { command: [process.execPath, "-e", `process.exit(${code})`] },
+                {
+                  command: [
+                    process.execPath,
+                    "-e",
+                    `process.exit(require("fs").existsSync("marker") ? ${code} : 2)`,
+                  ],
+                },
               ],
             },
           ],
@@ -205,6 +216,8 @@ test("check runs the configured repo's checks and fails when they fail", () =>
         "check",
         root,
       ]);
+    // Each check exits 2 unless it runs inside the target directory.
+    await Bun.write(join(root, "marker"), "");
     await write(0);
     await check();
     await write(1);
