@@ -41,9 +41,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run of that category picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
+4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
-Every run reviews open Milo PRs. Between 02:00 and 05:59 UTC it also runs security daily and one weekly task: dependencies Monday, architecture Tuesday, cleanup Wednesday, modernisation Thursday, performance Friday and organisation Saturday. A manual run starts every task. Limit tasks with `categories` in your config.
+Every run (every two hours) works the oldest approved ticket and reviews open Milo PRs. Milo also scans each category once a day: security, dependencies, architecture, cleanup, modernisation, performance and organisation. Limit scans with `categories` in your config.
 
 ## Move an existing setup to automatic updates
 
@@ -52,7 +52,7 @@ Older setups copied one workflow per task, so schedule changes, new tasks and ac
 1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
 2. Add the `milo.yml` from step 3 above.
 3. Keep your `maintenance` environment, secrets and variables as they are. The `secrets:` block in `milo.yml` is required when your repo has a different owner from `zeistapp`: without it GitHub passes empty secrets.
-4. If you used `categories` to limit tasks, keep it. Otherwise Milo now runs all seven, including the new `modernisation` task.
+4. If you used `categories` to limit tasks, keep it. Otherwise Milo scans all seven daily, including the new `modernisation` task.
 5. Optional: let Milo merge minor dependency PRs by adding `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]` to your repo entry. See [automatic merging](docs/usage.md#automatic-merging) for what that needs.
 6. Commit to your default branch, then run **Milo** from the Actions tab to check it works.
 
