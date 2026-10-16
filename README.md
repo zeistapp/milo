@@ -1,6 +1,6 @@
 # Milo
 
-Milo maintains JavaScript and TypeScript repos through GitHub issues and pull requests. Milo scans your code and opens an issue only when it finds something worth changing. You approve it; Milo makes the change and runs your checks; you review and merge.
+Milo keeps improving your JavaScript or TypeScript repo, the way a senior full-stack engineer would if they reviewed it every day. It opens a GitHub issue only for a real, important problem it has verified in your code. You approve it; Milo makes the change and runs your checks; you review and merge.
 
 It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, React, Next.js, Hono and other tools work through your existing package scripts.
 
