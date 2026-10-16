@@ -436,7 +436,7 @@ export class Runner {
         this.config,
         root,
         `Scan this repository for ${category} work. Do not edit files. Area: ${categories[category]}\n` +
-          "Report only the single most valuable change, backed by evidence with file locations. Skip speculative or cosmetic findings.\n" +
+          "Report only the single most important real issue, backed by evidence with file locations. It must meet the real and important bar above.\n" +
           "Clean is a normal result. A ticket costs a maintainer's attention, so raise one only for a change worth reviewing, never to fill a quota.\n" +
           "Verify before reporting: find every affected call site and check that the proposed fix works with installed and published versions. If you cannot verify a finding, do not raise it.\n" +
           "If nothing is worth changing, end with exactly one line: `Verdict: clean`.\n" +

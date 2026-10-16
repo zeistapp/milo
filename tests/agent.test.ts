@@ -114,7 +114,9 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       expect(invocation.input).toContain(
         "read the repository root AGENTS.md and CLAUDE.md",
       );
-      expect(invocation.input).toContain("senior full-stack developer");
+      expect(invocation.input).toContain(
+        "senior full-stack engineer who reviews this repository every day",
+      );
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");
       expect(invocation.claudeMd).toBe("1");
