@@ -123,6 +123,32 @@ await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Pat
     await runner.plan(repo, true, "day");
     expect((await Bun.file(calls).text()).length).toBe(count);
   }));
+test("malformed GitHub responses fail before Milo acts on them", async () => {
+  const gh: GitHubClient = {
+    async api() {
+      return { ...issue(), labels: "milo:ready" };
+    },
+    async pages() {
+      return [];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "bot";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+    async () => {
+      throw new Error("Unexpected clone");
+    },
+  );
+  await expect(runner.work({ name: "owner/repo" }, 12)).rejects.toThrow(
+    "at labels",
+  );
+});
 test("only approved tickets and same-repo Milo PRs may run", () => {
   validateIssue(issue());
   expect(() => validateIssue({ ...issue(), labels: [] })).toThrow();

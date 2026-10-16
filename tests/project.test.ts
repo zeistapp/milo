@@ -222,7 +222,7 @@ test("configuration validates categories, checks and command boundaries", () => 
       ...value,
       repos: [{ name: "owner/repo", categories: ["made-up"] }],
     }),
-  ).toThrow("unknown");
+  ).toThrow("Unknown maintenance category");
 });
 describe("project profiling edge cases", () => {
   const inspect = (

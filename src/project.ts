@@ -1,16 +1,35 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { Argv, Repo, Step } from "./config.ts";
+import { z } from "zod";
+import { type Argv, parse, type Repo, type Step } from "./config.ts";
 import { inside } from "./process.ts";
 
-interface Manifest {
-  name?: string;
-  packageManager?: string;
-  scripts?: Record<string, string>;
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  peerDependencies?: Record<string, string>;
-  exports?: unknown;
+function strings(field: string) {
+  const error = `Invalid ${field} in package.json`;
+  return z.record(z.string(), z.string({ error }), { error }).default({});
+}
+export const Manifest = z.object(
+  {
+    name: z.string().optional().catch(undefined),
+    packageManager: z
+      .string({ error: "Invalid packageManager in package.json" })
+      .optional(),
+    scripts: strings("scripts"),
+    dependencies: strings("dependencies"),
+    devDependencies: strings("devDependencies"),
+    peerDependencies: strings("peerDependencies"),
+    optionalDependencies: strings("optionalDependencies"),
+    exports: z.unknown().optional(),
+  },
+  { error: "Invalid package.json" },
+);
+async function readManifest(
+  directory: string,
+): Promise<z.infer<typeof Manifest>> {
+  return parse(
+    Manifest,
+    await Bun.file(join(directory, "package.json")).json(),
+  );
 }
 export interface PackageProfile {
   directory: string;
@@ -94,31 +113,16 @@ async function manifests(root: string, directory = "."): Promise<string[]> {
   }
   return files;
 }
-function stringMap(value: unknown, context: string): Record<string, string> {
-  if (value === undefined) return {};
-  if (
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    Object.values(value).some((value) => typeof value !== "string")
-  )
-    throw new Error(`Invalid ${context} in package.json`);
-  return value as Record<string, string>;
-}
 async function packageProfile(
   root: string,
   directory: string,
 ): Promise<PackageProfile> {
-  const manifest: Manifest = await Bun.file(
-    join(root, directory, "package.json"),
-  ).json();
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest))
-    throw new Error("Invalid package.json");
-  const scripts = stringMap(manifest.scripts, "scripts");
+  const manifest = await readManifest(join(root, directory));
+  const { scripts } = manifest;
   const dependencies = {
-    ...stringMap(manifest.peerDependencies, "peerDependencies"),
-    ...stringMap(manifest.devDependencies, "devDependencies"),
-    ...stringMap(manifest.dependencies, "dependencies"),
+    ...manifest.peerDependencies,
+    ...manifest.devDependencies,
+    ...manifest.dependencies,
   };
   const tools = [
     ...new Set(
@@ -140,7 +144,7 @@ async function packageProfile(
     (await Bun.file(join(root, directory, "tsconfig.json")).exists());
   return {
     directory,
-    name: typeof manifest.name === "string" ? manifest.name : directory,
+    name: manifest.name ?? directory,
     scripts,
     dependencies,
     tools,
@@ -152,7 +156,7 @@ async function packageProfile(
 async function manager(
   root: string,
 ): Promise<{ name: Project["packageManager"]; install: Argv }> {
-  const manifest: Manifest = await Bun.file(join(root, "package.json")).json();
+  const manifest = await readManifest(root);
   const locks = [
     {
       name: "bun" as const,

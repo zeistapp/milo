@@ -1,61 +1,77 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import { runClaude } from "./claude.ts";
 import {
   type Argv,
-  type Category,
+  Category,
   type Config,
   categories,
   type Period,
+  parse,
   type Repo,
   type Step,
 } from "./config.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
 import { command, confine, inside, temporary } from "./process.ts";
-import { inspectProject, type Project, projectContext } from "./project.ts";
+import {
+  inspectProject,
+  Manifest,
+  type Project,
+  projectContext,
+} from "./project.ts";
 
-export interface Issue {
-  number: number;
-  title: string;
-  body: string | null;
-  state: string;
-  labels: { name: string }[];
-  pull_request?: unknown;
-  html_url: string;
-}
-export interface PullRequest {
-  number: number;
-  state: string;
-  body: string | null;
-  html_url: string;
-  head: { ref: string; sha: string; repo: { full_name: string } | null };
-  base: { ref: string; sha: string };
-}
-export interface Review {
-  id: number;
-  state: string;
-  commit_id: string;
-  user: { login: string };
-  body: string;
-}
-interface Comment {
-  body: string;
-  user: { login: string };
-  pull_request_review_id?: number;
-}
+// GitHub responses carry user-written text; parse the fields Milo reads rather than casting.
+const User = z.object({ login: z.string() });
+const Link = z.object({ html_url: z.string() });
+export const Issue = z.object({
+  number: z.number(),
+  title: z.string(),
+  body: z.string().nullable(),
+  state: z.string(),
+  labels: z.array(z.object({ name: z.string() })),
+  pull_request: z.unknown().optional(),
+  html_url: z.string(),
+});
+export type Issue = z.infer<typeof Issue>;
+const Ref = z.object({ ref: z.string(), sha: z.string() });
+export const PullRequest = z.object({
+  number: z.number(),
+  state: z.string(),
+  body: z.string().nullable(),
+  html_url: z.string(),
+  head: Ref.extend({
+    repo: z.object({ full_name: z.string() }).nullable(),
+  }),
+  base: Ref,
+});
+export type PullRequest = z.infer<typeof PullRequest>;
+export const Review = z.object({
+  id: z.number(),
+  state: z.string(),
+  commit_id: z.string(),
+  user: User,
+  body: z.string(),
+});
+export type Review = z.infer<typeof Review>;
+const Comment = z.object({
+  body: z.string(),
+  user: User,
+  pull_request_review_id: z.number().optional(),
+});
 export interface GitHubClient {
-  api<T>(endpoint: string, method?: string, payload?: unknown): Promise<T>;
-  pages<T>(endpoint: string): Promise<T[]>;
+  api(endpoint: string, method?: string, payload?: unknown): Promise<unknown>;
+  pages(endpoint: string): Promise<unknown[]>;
   comment(number: number, body: string): Promise<void>;
   viewer(): Promise<string>;
 }
 export class GitHub implements GitHubClient {
   constructor(private repo: string) {}
-  async api<T>(
+  async api(
     endpoint: string,
     method = "GET",
     payload?: unknown,
-  ): Promise<T> {
+  ): Promise<unknown> {
     const args: Argv = [
       "gh",
       "api",
@@ -70,7 +86,7 @@ export class GitHub implements GitHubClient {
     if (!output) throw new Error("GitHub returned an empty response");
     return JSON.parse(output);
   }
-  async pages<T>(endpoint: string): Promise<T[]> {
+  async pages(endpoint: string): Promise<unknown[]> {
     const separator = endpoint.includes("?") ? "&" : "?";
     const output = await command([
       "gh",
@@ -79,16 +95,13 @@ export class GitHub implements GitHubClient {
       "--paginate",
       "--slurp",
     ]);
-    const pages = JSON.parse(output);
-    if (!Array.isArray(pages) || !pages.every(Array.isArray))
-      throw new Error("Expected GitHub collection pages");
-    return pages.flat();
+    return parse(z.array(z.array(z.unknown())), JSON.parse(output)).flat();
   }
   async comment(number: number, body: string): Promise<void> {
     await this.api(`issues/${number}/comments`, "POST", { body });
   }
   async viewer(): Promise<string> {
-    return JSON.parse(await command(["gh", "api", "user"])).login;
+    return parse(User, JSON.parse(await command(["gh", "api", "user"]))).login;
   }
 }
 // Harness rules come last so shared guidance cannot loosen them.
@@ -133,7 +146,7 @@ export function finding(
   return { title: title.trim().slice(0, 200), body: rest.join("\n").trim() };
 }
 export function issueCategory(issue: Issue): Category | undefined {
-  const matches = (Object.keys(categories) as Category[]).filter(
+  const matches = Category.options.filter(
     (category) =>
       (issue.body ?? "").includes(`<!-- milo:${category}:`) ||
       issue.labels.some((label) => label.name === `milo:${category}`),
@@ -219,18 +232,18 @@ export async function mergeBlocker(
     "devDependencies",
     "peerDependencies",
     "optionalDependencies",
-  ];
+  ] as const;
   for (const path of manifests) {
     const [before, after] = await Promise.all(
       [from, "HEAD"].map((ref) =>
         command(["git", "show", `${ref}:${path}`], { cwd: root }).then(
           (text) => {
-            const manifest = JSON.parse(text);
-            return new Map<string, string>(
+            const manifest = parse(Manifest, JSON.parse(text));
+            return new Map(
               fields.flatMap((field) =>
-                Object.entries(manifest[field] ?? {}).map(([name, value]) => [
+                Object.entries(manifest[field]).map(([name, value]) => [
                   `${field}:${name}`,
-                  String(value),
+                  value,
                 ]),
               ),
             );
@@ -368,10 +381,13 @@ export class Runner {
   ): Promise<void> {
     const gh = this.github(repo);
     const key = periodKey(period);
-    const selected = repo.categories ?? (Object.keys(categories) as Category[]);
+    const selected = repo.categories ?? Category.options;
     const existing = new Map(
-      (
-        await gh.pages<{ name: string; description: string | null }>("labels")
+      parse(
+        z.array(
+          z.object({ name: z.string(), description: z.string().nullable() }),
+        ),
+        await gh.pages("labels"),
       ).map((label) => [label.name, label.description]),
     );
     if (apply) {
@@ -382,9 +398,10 @@ export class Runner {
         if (!existing.has(name))
           await gh.api("labels", "POST", { name, color });
     }
-    const open = (await gh.pages<Issue>("issues?state=open")).filter(
-      (issue) => !Object.hasOwn(issue, "pull_request"),
-    );
+    const open = parse(
+      z.array(Issue),
+      await gh.pages("issues?state=open"),
+    ).filter((issue) => !Object.hasOwn(issue, "pull_request"));
     for (const category of selected) {
       const label = `milo:${category}`;
       // One outstanding ticket per category: triage or finish it before Milo looks again.
@@ -402,8 +419,9 @@ export class Runner {
       }
       if (found)
         console.log(
-          (
-            await gh.api<Issue>("issues", "POST", {
+          parse(
+            Link,
+            await gh.api("issues", "POST", {
               title: found.title,
               labels: [
                 "milo:task",
@@ -416,7 +434,7 @@ export class Runner {
                 (repo.autoMerge?.includes(category)
                   ? " Milo may merge a minor, reviewed PR after CI passes."
                   : " Milo never merges this category."),
-            })
+            }),
           ).html_url,
         );
       else console.log(`${repo.name}: ${category} scan found nothing`);
@@ -497,14 +515,14 @@ export class Runner {
   }
   async work(repo: Repo, number: number, category?: Category): Promise<void> {
     const gh = this.github(repo);
-    const issue = await gh.api<Issue>(`issues/${number}`);
+    const issue = parse(Issue, await gh.api(`issues/${number}`));
     validateIssue(issue);
     if (category && issueCategory(issue) !== category)
       throw new Error("Ticket belongs to another task runner");
     // The agent works from this exact text, so an edit mid-run needs a fresh run.
     // CEILING: a branch recovered after interrupted publication is not tied to the text it was built from; record a body hash in the commit if that matters.
     const recheck = async () => {
-      const current = await gh.api<Issue>(`issues/${number}`);
+      const current = parse(Issue, await gh.api(`issues/${number}`));
       validateIssue(current);
       if (
         current.title !== issue.title ||
@@ -514,8 +532,11 @@ export class Runner {
         throw new Error("Ticket changed during execution");
     };
     const branch = `milo/issue-${number}`;
-    const prs = await gh.pages<PullRequest>(
-      `pulls?state=all&head=${repo.name.split("/")[0]}:${branch}`,
+    const prs = parse(
+      z.array(Link),
+      await gh.pages(
+        `pulls?state=all&head=${repo.name.split("/")[0]}:${branch}`,
+      ),
     );
     const existing = prs[0];
     if (existing) {
@@ -584,12 +605,15 @@ export class Runner {
           );
         }
         await recheck();
-        const pr = await gh.api<PullRequest>("pulls", "POST", {
-          title: issue.title,
-          head: branch,
-          base,
-          body: `Closes #${number}\n\n${report}${this.checkReport(project)}`,
-        });
+        const pr = parse(
+          Link,
+          await gh.api("pulls", "POST", {
+            title: issue.title,
+            head: branch,
+            base,
+            body: `Closes #${number}\n\n${report}${this.checkReport(project)}`,
+          }),
+        );
         await gh.comment(number, `Ready for review: ${pr.html_url}`);
         console.log(pr.html_url);
       });
@@ -616,11 +640,14 @@ export class Runner {
   ): Promise<Review[]> {
     const requests: Review[] = [];
     for (const review of latestRequests(
-      await gh.pages<Review>(`pulls/${number}/reviews`),
+      parse(z.array(Review), await gh.pages(`pulls/${number}/reviews`)),
       sha,
     )) {
-      const { permission } = await gh.api<{ permission: string }>(
-        `collaborators/${encodeURIComponent(review.user.login)}/permission`,
+      const { permission } = parse(
+        z.object({ permission: z.string() }),
+        await gh.api(
+          `collaborators/${encodeURIComponent(review.user.login)}/permission`,
+        ),
       );
       if (["admin", "maintain", "write"].includes(permission))
         requests.push(review);
@@ -633,14 +660,20 @@ export class Runner {
   ): Promise<string | undefined> {
     const viewer = await gh.viewer();
     // Markers lead the comment, so agent report text cannot forge them.
-    return (await gh.pages<Comment>(`issues/${pr.number}/comments`)).find(
+    return parse(
+      z.array(Comment),
+      await gh.pages(`issues/${pr.number}/comments`),
+    ).find(
       (comment) =>
         comment.user.login === viewer &&
         comment.body.startsWith(reviewMarker(pr.head.sha)),
     )?.body;
   }
-  private ticket(gh: GitHubClient, pr: PullRequest): Promise<Issue> {
-    return gh.api<Issue>(`issues/${pr.head.ref.slice("milo/issue-".length)}`);
+  private async ticket(gh: GitHubClient, pr: PullRequest): Promise<Issue> {
+    return parse(
+      Issue,
+      await gh.api(`issues/${pr.head.ref.slice("milo/issue-".length)}`),
+    );
   }
   private async autoMergeCategory(
     gh: GitHubClient,
@@ -661,15 +694,22 @@ export class Runner {
   ): Promise<void> {
     if (!(await this.autoMergeCategory(gh, repo, pr))) return;
     if (
-      latestRequests(await gh.pages<Review>(`pulls/${pr.number}/reviews`))
-        .length
+      latestRequests(
+        parse(z.array(Review), await gh.pages(`pulls/${pr.number}/reviews`)),
+      ).length
     )
       return;
-    const { check_runs: runs } = await gh.api<{
-      check_runs: { status: string; conclusion: string | null }[];
-    }>(`commits/${pr.head.sha}/check-runs?per_page=100`);
-    const status = await gh.api<{ state: string; total_count: number }>(
-      `commits/${pr.head.sha}/status`,
+    const { check_runs: runs } = parse(
+      z.object({
+        check_runs: z.array(
+          z.object({ status: z.string(), conclusion: z.string().nullable() }),
+        ),
+      }),
+      await gh.api(`commits/${pr.head.sha}/check-runs?per_page=100`),
+    );
+    const status = parse(
+      z.object({ state: z.string(), total_count: z.number() }),
+      await gh.api(`commits/${pr.head.sha}/status`),
     );
     if (!runs.length && !status.total_count) {
       console.log(`${pr.html_url}: no CI checks; auto-merge needs PR CI`);
@@ -686,8 +726,9 @@ export class Runner {
       console.log(`${pr.html_url}: waiting for passing CI`);
       return;
     }
-    const { behind_by } = await gh.api<{ behind_by: number }>(
-      `compare/${pr.base.ref}...${pr.head.sha}`,
+    const { behind_by } = parse(
+      z.object({ behind_by: z.number() }),
+      await gh.api(`compare/${pr.base.ref}...${pr.head.sha}`),
     );
     if (behind_by) {
       // The new head is reviewed and checked again before a later run merges it.
@@ -711,7 +752,7 @@ export class Runner {
   }
   async review(repo: Repo, number: number, revise = false): Promise<void> {
     const gh = this.github(repo);
-    const pr = await gh.api<PullRequest>(`pulls/${number}`);
+    const pr = parse(PullRequest, await gh.api(`pulls/${number}`));
     validatePR(pr, repo);
     if (!revise && (await this.reviewed(gh, pr))) {
       console.log("This commit already has an automated review");
@@ -768,7 +809,7 @@ export class Runner {
             diff,
           true,
         );
-        const current = await gh.api<PullRequest>(`pulls/${number}`);
+        const current = parse(PullRequest, await gh.api(`pulls/${number}`));
         validatePR(current, repo);
         if (current.head.sha !== pr.head.sha)
           throw new Error("PR changed during review; retry");
@@ -796,8 +837,9 @@ export class Runner {
       }
       let project = await this.prepare(repo, root);
       const ids = new Set(requests.map((review) => review.id));
-      const inline = (
-        await gh.pages<Comment>(`pulls/${number}/comments`)
+      const inline = parse(
+        z.array(Comment),
+        await gh.pages(`pulls/${number}/comments`),
       ).filter((comment) => ids.has(comment.pull_request_review_id ?? -1));
       const report = await runAgent(
         this.config,
@@ -812,7 +854,7 @@ export class Runner {
         console.log("No revision produced; the PR still needs human attention");
         return;
       }
-      const current = await gh.api<PullRequest>(`pulls/${number}`);
+      const current = parse(PullRequest, await gh.api(`pulls/${number}`));
       validatePR(current, repo);
       if (current.head.sha !== pr.head.sha)
         throw new Error("PR changed during revision; retry");
@@ -851,8 +893,9 @@ export class Runner {
       throw new Error("Category is disabled for this repository");
     const scoped = category ? { ...repo, categories: [category] } : repo;
     const gh = this.github(repo);
-    for (const issue of (
-      await gh.pages<Issue>("issues?state=open&labels=milo:ready")
+    for (const issue of parse(
+      z.array(Issue),
+      await gh.pages("issues?state=open&labels=milo:ready"),
     ).sort((a, b) => a.number - b.number)) {
       try {
         validateIssue(issue);
@@ -863,7 +906,7 @@ export class Runner {
       const branch = `milo/issue-${issue.number}`;
       if (
         (
-          await gh.pages<PullRequest>(
+          await gh.pages(
             `pulls?state=all&head=${repo.name.split("/")[0]}:${branch}`,
           )
         ).length
@@ -877,7 +920,10 @@ export class Runner {
   }
   async runReviews(repo: Repo): Promise<void> {
     const gh = this.github(repo);
-    for (const pr of await gh.pages<PullRequest>("pulls?state=open")) {
+    for (const pr of parse(
+      z.array(PullRequest),
+      await gh.pages("pulls?state=open"),
+    )) {
       try {
         validatePR(pr, repo);
       } catch {

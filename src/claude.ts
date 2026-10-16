@@ -1,9 +1,24 @@
 import { join } from "node:path";
+import { z } from "zod";
 import type { Argv } from "./config.ts";
 import { command } from "./process.ts";
 
 // Required CLI floor for restricted mode and fail-closed shell sandbox settings.
 export const minimumClaudeVersion = "2.1.296";
+// Denials only label the failure, so a malformed one becomes "unknown tool" instead of hiding it.
+const Denial = z
+  .object({
+    tool_name: z.string().catch(""),
+    tool_input: z.object({ command: z.string() }).optional().catch(undefined),
+  })
+  .catch({ tool_name: "" });
+const Result = z.object({
+  type: z.literal("result"),
+  subtype: z.literal("success"),
+  is_error: z.literal(false),
+  result: z.string(),
+  permission_denials: z.array(Denial).catch([]),
+});
 
 export function claudeCommand(
   root: string,
@@ -98,31 +113,20 @@ export async function runClaude(
     // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
     env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" },
   });
-  let result: unknown;
+  let json: unknown;
   try {
-    result = JSON.parse(stdout);
+    json = JSON.parse(stdout);
   } catch {
     throw new Error("Claude returned invalid JSON");
   }
-  if (!result || typeof result !== "object")
-    throw new Error("Claude returned an invalid result");
-  const response = result as Record<string, unknown>;
-  if (
-    response.type !== "result" ||
-    response.subtype !== "success" ||
-    response.is_error !== false ||
-    typeof response.result !== "string"
-  )
+  const response = Result.safeParse(json);
+  if (!response.success)
     throw new Error("Claude did not complete successfully");
-  if (
-    Array.isArray(response.permission_denials) &&
-    response.permission_denials.length
-  ) {
+  const { result, permission_denials: denials } = response.data;
+  if (denials.length) {
     // Report only fixed labels, never agent-supplied arguments, paths or secrets.
     const details = new Set(
-      response.permission_denials.map((denial: unknown) => {
-        if (!denial || typeof denial !== "object") return "unknown tool";
-        const item = denial as Record<string, unknown>;
+      denials.map(({ tool_name, tool_input }) => {
         const tool = [
           "Bash",
           "Read",
@@ -132,12 +136,10 @@ export async function runClaude(
           "Grep",
           "WebFetch",
           "WebSearch",
-        ].find((name) => item.tool_name === name);
+        ].find((name) => tool_name === name);
         if (!tool) return "unknown tool";
-        const input = item.tool_input;
-        if (tool !== "Bash" || !input || typeof input !== "object") return tool;
-        const value = (input as Record<string, unknown>).command;
-        if (typeof value !== "string") return tool;
+        const value = tool_input?.command;
+        if (tool !== "Bash" || value === undefined) return tool;
         const operation = [
           "bun outdated",
           "bun install",
@@ -157,5 +159,5 @@ export async function runClaude(
       `Claude encountered denied permissions: ${[...details].join(", ")}; task needs human attention`,
     );
   }
-  return response.result;
+  return result;
 }

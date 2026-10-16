@@ -1,10 +1,10 @@
 import { parseArgs } from "node:util";
 import {
-  type Category,
-  categories,
+  Category,
   includeSelfRepo,
   loadConfig,
-  type Period,
+  Period,
+  parse,
 } from "./config.ts";
 import { localCheck } from "./local.ts";
 import { inspectProject } from "./project.ts";
@@ -35,7 +35,6 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
     },
   });
   const configFile = values.config ?? "milo.config.json";
-  const period = values.period ?? "week";
   if (values.help) {
     console.log(
       "Milo: bun run milo [--config path] [--repo owner/repo] <validate|inspect|check|plan|task|reviews|work|review|revise|tick> [number/path] [--apply] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
@@ -78,13 +77,13 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
     ].includes(action)
   )
     throw new Error("Specify a command; use --help");
-  if (values.category && !Object.hasOwn(categories, values.category))
-    throw new Error("Unknown maintenance category");
-  if (values.category && !["task", "plan", "work"].includes(action))
+  const category = values.category
+    ? parse(Category, values.category)
+    : undefined;
+  if (category && !["task", "plan", "work"].includes(action))
     throw new Error("Use --category with task, plan, or work");
-  if (!["day", "week", "month"].includes(period))
-    throw new Error("period must be day, week, or month");
-  if (action === "task" && !values.category)
+  const period = parse(Period, values.period ?? "week");
+  if (action === "task" && !category)
     throw new Error("task requires --category");
   let config = await loadConfig(configFile);
   if (values["self-repo"])
@@ -96,13 +95,11 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   const repos = config.repos.filter(
     (repo) =>
       (!values.repo || repo.name === values.repo) &&
-      (!values.category ||
-        !repo.categories ||
-        repo.categories.includes(values.category as Category)),
+      (!category || !repo.categories || repo.categories.includes(category)),
   );
   // Shared schedules run every category; a repo that disabled this one has nothing to do.
   if (!repos.length && action === "task" && !values.repo) {
-    console.log(`No configured repository enables ${values.category}`);
+    console.log(`No configured repository enables ${category}`);
     return;
   }
   if (!repos.length) throw new Error("No configured repositories matched");
@@ -123,25 +120,14 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
     try {
       if (action === "plan")
         await runner.plan(
-          values.category
-            ? { ...repo, categories: [values.category as Category] }
-            : repo,
+          category ? { ...repo, categories: [category] } : repo,
           values.apply,
-          period as Period,
+          period,
         );
-      else if (action === "task")
-        await runner.runTasks(
-          repo,
-          values.category as Category,
-          period as Period,
-        );
+      else if (action === "task") await runner.runTasks(repo, category, period);
       else if (action === "reviews") await runner.runReviews(repo);
       else if (action === "work")
-        await runner.work(
-          repo,
-          Number(target),
-          values.category as Category | undefined,
-        );
+        await runner.work(repo, Number(target), category);
       else if (action === "review" || action === "revise")
         await runner.review(repo, Number(target), action === "revise");
       else await runner.tick(repo);
