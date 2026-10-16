@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config, Repo } from "../src/config.ts";
@@ -268,7 +269,7 @@ test("untrusted steps cannot read Milo's token or write outside the clone", () =
     const outside = join(folder, "outside");
     await Bun.write(
       probe,
-      `import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+      `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 let leaked = false;
 if (process.platform === "linux")
   for (const pid of readdirSync("/proc"))
@@ -277,16 +278,21 @@ else
   try { leaked = Bun.spawnSync(["ps", "eww", "-A"]).stdout.toString().includes("test-secret"); } catch {}
 for (const path of ["file", ".git/config", ${JSON.stringify(outside)}])
   try { writeFileSync(path, "x"); } catch {}
-console.log(JSON.stringify({ leaked, home: process.env.HOME }));`,
+let xdg = false;
+try { mkdirSync(\`\${process.env.XDG_CONFIG_HOME}/astro\`, { recursive: true }); xdg = true; } catch {}
+console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg }));`,
     );
     // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
-    const milo = `import { command, confine } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
+    const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
 console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
-  { cwd: ${JSON.stringify(root)}, trusted: false, env: { HOME: ${JSON.stringify(home)}, TMPDIR: ${JSON.stringify(home)} } }));`;
+  { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) }));`;
+    // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
+    const config = join(folder, "real-config");
     const output = await command([process.execPath, "-e", milo], {
-      env: { GH_TOKEN: "test-secret" },
+      env: { GH_TOKEN: "test-secret", XDG_CONFIG_HOME: config },
     });
-    expect(JSON.parse(output)).toEqual({ leaked: false, home });
+    expect(JSON.parse(output)).toEqual({ leaked: false, home, xdg: true });
+    expect(existsSync(config)).toBeFalse();
     // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
     expect(await Bun.file(join(root, "file")).exists()).toBeTrue();
     expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();

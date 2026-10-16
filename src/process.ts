@@ -175,6 +175,18 @@ export function confine(
   }
   throw new Error("Untrusted steps need a Linux or macOS sandbox");
 }
+// Tools look up config and caches through XDG paths before HOME, and GitHub's runners point
+// those at the real home, which the sandbox makes read-only.
+export function sandboxEnv(home: string): Record<string, string> {
+  return {
+    HOME: home,
+    TMPDIR: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_DATA_HOME: join(home, ".local/share"),
+    XDG_STATE_HOME: join(home, ".local/state"),
+  };
+}
 export async function temporary<T>(
   prefix: string,
   work: (folder: string) => Promise<T>,

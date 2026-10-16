@@ -1,12 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { main } from "../src/cli.ts";
-import {
-  type Config,
-  categories,
-  includeSelfRepo,
-  type Repo,
-} from "../src/config.ts";
-import { command, temporary } from "../src/process.ts";
+import { type Config, includeSelfRepo, type Repo } from "../src/config.ts";
+import { temporary } from "../src/process.ts";
 import {
   type GitHubClient,
   type Issue,
@@ -64,6 +59,35 @@ test("a dedicated task runner cannot consume another category or run reviews", a
   expect(work).toHaveBeenCalledWith(repo, 2, "dependencies");
   expect(reviews).not.toHaveBeenCalled();
 });
+test("an unscoped task runner works the oldest approved ticket of any category, then scans every category", async () => {
+  const uncategorised = {
+    ...ticket(1, "x"),
+    body: "",
+    labels: [{ name: "milo:task" }, { name: "milo:ready" }],
+  };
+  const issues = [ticket(3, "cleanup"), uncategorised];
+  const gh: GitHubClient = {
+    async api<T>(): Promise<T> {
+      throw new Error("Unexpected API write");
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      return (endpoint.startsWith("issues?") ? issues : []) as T[];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "bot";
+    },
+  };
+  const runner = new Runner(config, () => gh);
+  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const work = spyOn(runner, "work").mockResolvedValue(undefined);
+  await runner.runTasks(repo, undefined, "day");
+  expect(work).toHaveBeenCalledTimes(1);
+  expect(work).toHaveBeenCalledWith(repo, 1, undefined);
+  expect(plan).toHaveBeenCalledWith(repo, true, "day");
+});
 test("self maintenance includes the published runner repo without duplicating explicit configuration", () => {
   const explicit: Config = {
     ...config,
@@ -83,13 +107,12 @@ test("self maintenance includes the published runner repo without duplicating ex
   ]);
   expect(() => includeSelfRepo(config, "invalid")).toThrow("owner/repository");
 });
-test("one consumer workflow picks daily security and one weekly task per day", async () => {
+test("one consumer workflow works approved tickets and runs daily scans on every run", async () => {
   const root = `${import.meta.dir}/../.github/workflows`;
   const consumer = Bun.YAML.parse(
     await Bun.file(`${root}/consumer.yml`).text(),
   ) as {
     jobs: {
-      schedule: { steps: { run: string }[] };
       tasks: { uses: string; secrets: unknown; with: Record<string, string> };
       reviews: { uses: string; secrets: unknown; with: Record<string, string> };
     };
@@ -100,51 +123,12 @@ test("one consumer workflow picks daily security and one weekly task per day", a
       `\${{ secrets.${name} }}`,
     ]),
   );
-  const script = consumer.jobs.schedule.steps[0]?.run;
-  if (!script) throw new Error("Missing schedule script");
-  const pick = (event: string, day: string, hour: string) =>
-    temporary("milo-schedule-", async (folder) => {
-      const output = `${folder}/output`;
-      const env = {
-        EVENT: event,
-        MILO_DAY: day,
-        MILO_HOUR: hour,
-        GITHUB_OUTPUT: output,
-      };
-      const previous = Object.fromEntries(
-        Object.keys(env).map((key) => [key, process.env[key]]),
-      );
-      try {
-        Object.assign(process.env, env);
-        await Bun.write(output, "");
-        await command(["bash", "-c", script]);
-        return JSON.parse(
-          (await Bun.file(output).text()).replace("categories=", ""),
-        ) as string[];
-      } finally {
-        for (const [key, value] of Object.entries(previous)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
-      }
-    });
-  const weekly = new Set<string>();
-  for (const day of ["1", "2", "3", "4", "5", "6", "7"]) {
-    const today = await pick("schedule", day, "04");
-    expect(today[0]).toBe("security");
-    for (const category of today.slice(1)) weekly.add(category);
-  }
-  expect([...weekly, "security"].sort()).toEqual(
-    Object.keys(categories).sort(),
-  );
-  expect(await pick("schedule", "1", "08")).toEqual([]);
-  expect(await pick("schedule", "1", "02")).toEqual([
-    "security",
-    "dependencies",
-  ]);
-  expect((await pick("workflow_dispatch", "1", "08")).sort()).toEqual(
-    Object.keys(categories).sort(),
-  );
+  // No category, so any approved ticket qualifies; scans dedupe per UTC day.
+  expect(consumer.jobs.tasks.with).toEqual({
+    action: "task",
+    period: "day",
+    config: `\${{ inputs.config }}`,
+  });
   for (const job of [consumer.jobs.tasks, consumer.jobs.reviews]) {
     expect(job.uses).toBe(
       "zeistapp/milo/.github/workflows/maintenance.yml@main",

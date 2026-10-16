@@ -83,8 +83,6 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   if (category && !["task", "plan", "work"].includes(action))
     throw new Error("Use --category with task, plan, or work");
   const period = parse(Period, values.period ?? "week");
-  if (action === "task" && !category)
-    throw new Error("task requires --category");
   let config = await loadConfig(configFile);
   if (values["self-repo"])
     config = includeSelfRepo(config, values["self-repo"]);
@@ -97,8 +95,8 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       (!values.repo || repo.name === values.repo) &&
       (!category || !repo.categories || repo.categories.includes(category)),
   );
-  // Shared schedules run every category; a repo that disabled this one has nothing to do.
-  if (!repos.length && action === "task" && !values.repo) {
+  // A targeted category run is a no-op for repos that disabled that category.
+  if (category && !repos.length && action === "task" && !values.repo) {
     console.log(`No configured repository enables ${category}`);
     return;
   }

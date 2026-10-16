@@ -13,7 +13,7 @@ import {
   type Step,
 } from "./config.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
-import { command, confine, inside, temporary } from "./process.ts";
+import { command, confine, inside, sandboxEnv, temporary } from "./process.ts";
 import {
   inspectProject,
   Manifest,
@@ -275,7 +275,7 @@ async function steps(commands: Step[], root: string): Promise<void> {
       cwd,
       trusted: false,
       timeoutSeconds: 900,
-      env: { HOME: home, TMPDIR: home },
+      env: sandboxEnv(home),
     });
   }
 }

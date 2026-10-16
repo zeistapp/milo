@@ -98,6 +98,10 @@ test("commands dispatch to the runner with parsed options", async () => {
         ],
       },
     ],
+    [
+      ["task", "--repo", "owner/a", "--period", "day"],
+      { runTasks: [[a, undefined, "day"]] },
+    ],
     [["reviews", "--repo", "owner/b"], { runReviews: [[b]] }],
     [
       ["plan", "--repo", "owner/b", "--period", "month"],
@@ -130,7 +134,6 @@ test("invalid commands fail before the runner starts", async () => {
     [["plan", "--category", "nope"], "Unknown maintenance category"],
     [["reviews", "--category", "security"], "Use --category"],
     [["plan", "--period", "year"], "period must be"],
-    [["task"], "task requires --category"],
     [["work", "12"], "Select one repository"],
     [["work", "--repo", "owner/a"], "Select one repository"],
     ...["0", "012", "1.5", "12x", "x12", "99999999999999999999"].map(
