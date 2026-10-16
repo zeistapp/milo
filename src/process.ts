@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { closeSync, openSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, writeSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import type { Argv } from "./config.ts";
 
@@ -114,6 +114,66 @@ export async function command(
     });
     child.stdin.end(options.input ?? "");
   });
+}
+// Runs untrusted repository code with no view of other processes' environments, so it
+// cannot read Milo's tokens, and with writes limited to the clone (not .git), a scratch
+// home (also its temp folder) and /tmp. On Linux, processes left behind die with the step.
+// Paths must be real paths: the macOS sandbox matches resolved paths.
+// CEILING: macOS has no process namespace, so leftover processes outlive the step, still confined.
+export function confine(
+  argv: Argv,
+  root: string,
+  home: string,
+  cwd: string,
+): Argv {
+  const secrets = [".ssh", ".aws", ".config/gh", ".codex", ".claude"].map(
+    (dir) => join(homedir(), dir),
+  );
+  if (process.platform === "linux")
+    return [
+      "bwrap",
+      "--die-with-parent",
+      "--new-session",
+      "--unshare-pid",
+      "--ro-bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--proc",
+      "/proc",
+      "--tmpfs",
+      "/tmp",
+      "--bind",
+      root,
+      root,
+      "--ro-bind",
+      join(root, ".git"),
+      join(root, ".git"),
+      "--bind",
+      home,
+      home,
+      ...secrets.filter(existsSync).flatMap((dir) => ["--tmpfs", dir]),
+      "--chdir",
+      cwd,
+      "--",
+      ...argv,
+    ];
+  if (process.platform === "darwin") {
+    // Seatbelt also blocks setuid programs such as ps, which can read other processes' environments.
+    const paths = (...dirs: string[]) =>
+      dirs.map((dir) => `(subpath ${JSON.stringify(dir)})`).join(" ");
+    return [
+      "sandbox-exec",
+      "-p",
+      "(version 1)(allow default)(deny file-write*)" +
+        `(allow file-write* ${paths(root, home, "/private/tmp", "/dev")})` +
+        `(deny file-write* ${paths(join(root, ".git"))})` +
+        `(deny file-read* ${paths(...secrets)})`,
+      ...argv,
+    ];
+  }
+  throw new Error("Untrusted steps need a Linux or macOS sandbox");
 }
 export async function temporary<T>(
   prefix: string,

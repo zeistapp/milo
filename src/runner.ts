@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { runClaude } from "./claude.ts";
 import {
   type Argv,
@@ -10,7 +11,7 @@ import {
   type Step,
 } from "./config.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
-import { command, inside, temporary } from "./process.ts";
+import { command, confine, inside, temporary } from "./process.ts";
 import { inspectProject, type Project, projectContext } from "./project.ts";
 
 export interface Issue {
@@ -251,12 +252,19 @@ export async function mergeBlocker(
   }
 }
 async function steps(commands: Step[], root: string): Promise<void> {
-  for (const step of commands)
-    await command(step.command, {
-      cwd: await inside(root, step.cwd),
+  const repo = await inside(root);
+  // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
+  const home = join(dirname(repo), "home");
+  await mkdir(home, { recursive: true });
+  for (const step of commands) {
+    const cwd = await inside(root, step.cwd);
+    await command(confine(step.command, repo, home, cwd), {
+      cwd,
       trusted: false,
       timeoutSeconds: 900,
+      env: { HOME: home, TMPDIR: home },
     });
+  }
 }
 export async function clone(repo: Repo, root: string): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
