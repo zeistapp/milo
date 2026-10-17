@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { claudeCommand } from "../src/claude.ts";
+import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { temporary } from "../src/process.ts";
 import { runAgent } from "../src/runner.ts";
@@ -74,7 +74,7 @@ test("provider subprocesses forward prompts and models, save reports and reject 
   temporary("milo-agents-", async (root) => {
     const script = `#!${process.execPath}
 const args = Bun.argv.slice(2);
-if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '2.1.296 (Claude Code)'); process.exit(0); }
+if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '${minimumClaudeVersion} (Claude Code)'); process.exit(0); }
 const input = await Bun.stdin.text();
 await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY,claudeMd:process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD}));
 if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Codex report');
@@ -130,9 +130,19 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       const codex = await Bun.file(join(root, "invocation.json")).json();
       expect(codex.args).toContain("workspace-write");
       expect(codex.args).toContain("exact-model");
-      process.env.MILO_TEST_VERSION = "2.1.295 (Claude Code)";
+      // The default fake version above is exactly the floor and was accepted.
+      const [major = 0, minor = 0, patch = 0] = minimumClaudeVersion
+        .split(".")
+        .map(Number);
+      const below = patch
+        ? `${major}.${minor}.${patch - 1}`
+        : minor
+          ? `${major}.${minor - 1}.999`
+          : `${major - 1}.999.999`;
+      expect(Bun.semver.order(below, minimumClaudeVersion)).toBe(-1);
+      process.env.MILO_TEST_VERSION = `${below} (Claude Code)`;
       await expect(runAgent(config("claude"), root, "test")).rejects.toThrow(
-        "2.1.296+",
+        `${minimumClaudeVersion}+`,
       );
       delete process.env.MILO_TEST_VERSION;
       for (const [result, error] of [
