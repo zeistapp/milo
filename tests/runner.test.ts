@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config, Repo } from "../src/config.ts";
-import { command, temporary } from "../src/process.ts";
+import { type CommandOptions, command, temporary } from "../src/process.ts";
 import {
   changes,
   finding,
@@ -204,45 +204,60 @@ test("review revisions use the current effective review on the current commit", 
   ).toEqual([request]);
 });
 test("child processes lose GitHub credentials and time out", async () => {
-  const previous = process.env.GH_TOKEN;
-  const previousAgent = process.env.CODEX_API_KEY;
-  process.env.GH_TOKEN = "test-secret";
-  process.env.CODEX_API_KEY = "test-agent-secret";
-  try {
-    const output = await command(
-      [
-        process.execPath,
-        "-e",
-        "console.log(JSON.stringify({token:process.env.GH_TOKEN,helper:process.env.GIT_CONFIG_VALUE_0}))",
-      ],
-      { trusted: false },
+  const github = [
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "ACTIONS_RUNTIME_TOKEN",
+  ];
+  const agent = [
+    "CODEX_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "AZURE_OPENAI_API_KEY",
+  ];
+  const git = [
+    "GIT_TERMINAL_PROMPT",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_KEY_0",
+    "GIT_CONFIG_VALUE_0",
+  ];
+  const visible = async (options: CommandOptions) =>
+    JSON.parse(
+      await command(
+        [
+          process.execPath,
+          "-e",
+          `console.log(JSON.stringify(Object.fromEntries(${JSON.stringify([...github, ...agent, ...git])}.filter((key) => key in process.env).map((key) => [key, process.env[key]]))))`,
+        ],
+        options,
+      ),
     );
-    expect(JSON.parse(output)).toEqual({ helper: "" });
+  const previous = Object.fromEntries(
+    [...github, ...agent].map((key) => [key, process.env[key]]),
+  );
+  const gitPrompt = {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "credential.helper",
+    GIT_CONFIG_VALUE_0: "",
+  };
+  try {
+    for (const key of [...github, ...agent]) process.env[key] = `${key}-secret`;
+    expect(await visible({ trusted: false })).toEqual(gitPrompt);
     expect(
-      await command(
-        [
-          process.execPath,
-          "-e",
-          "console.log(process.env.CODEX_API_KEY ?? 'absent')",
-        ],
-        { trusted: false },
-      ),
-    ).toBe("absent");
-    expect(
-      await command(
-        [
-          process.execPath,
-          "-e",
-          "console.log(process.env.CODEX_API_KEY ?? 'absent')",
-        ],
-        { trusted: false, keepAgentCredentials: true },
-      ),
-    ).toBe("test-agent-secret");
+      await visible({ trusted: false, keepAgentCredentials: true }),
+    ).toEqual({
+      ...Object.fromEntries(agent.map((key) => [key, `${key}-secret`])),
+      ...gitPrompt,
+    });
   } finally {
-    if (previous === undefined) delete process.env.GH_TOKEN;
-    else process.env.GH_TOKEN = previous;
-    if (previousAgent === undefined) delete process.env.CODEX_API_KEY;
-    else process.env.CODEX_API_KEY = previousAgent;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
   await expect(
     command([process.execPath, "-e", "await Bun.sleep(10000)"], {
@@ -267,6 +282,12 @@ test("untrusted steps cannot read Milo's token or write outside the clone", () =
     await mkdir(home);
     const probe = join(home, "probe.ts");
     const outside = join(folder, "outside");
+    // Milo's own home holds credentials the step must not read.
+    const realHome = join(folder, "real-home");
+    const secrets = [".ssh", ".aws", ".config/gh", ".codex", ".claude"].map(
+      (dir) => join(realHome, dir, "secret"),
+    );
+    for (const secret of secrets) await Bun.write(secret, "x");
     await Bun.write(
       probe,
       `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -280,7 +301,8 @@ for (const path of ["file", ".git/config", ${JSON.stringify(outside)}])
   try { writeFileSync(path, "x"); } catch {}
 let xdg = false;
 try { mkdirSync(\`\${process.env.XDG_CONFIG_HOME}/astro\`, { recursive: true }); xdg = true; } catch {}
-console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg }));`,
+const readable = ${JSON.stringify(secrets)}.filter((path) => { try { return readFileSync(path, "utf8") === "x"; } catch { return false; } });
+console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg, readable }));`,
     );
     // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
     const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
@@ -289,9 +311,14 @@ console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], 
     // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
     const config = join(folder, "real-config");
     const output = await command([process.execPath, "-e", milo], {
-      env: { GH_TOKEN: "test-secret", XDG_CONFIG_HOME: config },
+      env: { GH_TOKEN: "test-secret", XDG_CONFIG_HOME: config, HOME: realHome },
     });
-    expect(JSON.parse(output)).toEqual({ leaked: false, home, xdg: true });
+    expect(JSON.parse(output)).toEqual({
+      leaked: false,
+      home,
+      xdg: true,
+      readable: [],
+    });
     expect(existsSync(config)).toBeFalse();
     // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
     expect(await Bun.file(join(root, "file")).exists()).toBeTrue();

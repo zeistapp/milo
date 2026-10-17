@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { parseConfig } from "../src/config.ts";
+import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { temporary } from "../src/process.ts";
 import { inspectProject, projectContext } from "../src/project.ts";
 
@@ -223,6 +223,55 @@ test("configuration validates categories, checks and command boundaries", () => 
       repos: [{ name: "owner/repo", categories: ["made-up"] }],
     }),
   ).toThrow("Unknown maintenance category");
+  const step = (cwd: string) =>
+    parseConfig({
+      ...value,
+      repos: [{ name: "owner/repo", setup: [{ command: ["true"], cwd }] }],
+    });
+  expect(step("packages/app").repos[0]?.setup?.[0]?.cwd).toBe("packages/app");
+  for (const cwd of ["", "/etc", "packages/../../x", "a\\..\\.."])
+    expect(() => step(cwd)).toThrow("inside");
+  for (const name of ["owner", "x?y/a/b", "owner/repo/extra", "own er/repo"])
+    expect(() => parseConfig({ ...value, repos: [{ name }] })).toThrow(
+      "owner/repository",
+    );
+  expect(() =>
+    parseConfig({
+      ...value,
+      repos: [{ name: "owner/repo" }, { name: "Owner/Repo" }],
+    }),
+  ).toThrow("Duplicate repository");
+  // Without categories every category is enabled, so any auto list is allowed.
+  expect(
+    parseConfig({
+      ...value,
+      repos: [{ name: "owner/repo", autoMerge: ["dependencies"] }],
+    }).repos[0]?.autoMerge,
+  ).toEqual(["dependencies"]);
+  expect(() =>
+    parseConfig({
+      ...value,
+      repos: [
+        {
+          name: "owner/repo",
+          categories: ["security"],
+          autoReady: ["dependencies"],
+        },
+      ],
+    }),
+  ).toThrow("subsets");
+  for (const agent of [{}, { command: ["agent"] }])
+    expect(() => parseConfig({ ...value, agent })).toThrow("{output}");
+});
+test("the calling repository is added once, whatever its case", () => {
+  const config = parseConfig({
+    agent: { provider: "claude" },
+    repos: [{ name: "owner/repo" }],
+  });
+  expect(includeSelfRepo(config, "OWNER/REPO")).toBe(config);
+  expect(
+    includeSelfRepo(config, "owner/milo").repos.map(({ name }) => name),
+  ).toEqual(["owner/repo", "owner/milo"]);
 });
 describe("project profiling edge cases", () => {
   const inspect = (
