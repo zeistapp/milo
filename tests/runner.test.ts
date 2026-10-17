@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
@@ -578,12 +578,16 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   let runs = [{ status: "in_progress", conclusion: null as string | null }];
   let status = { state: "pending", total_count: 0 };
   let behind = 0;
+  let conflict = false;
+  let open = [pr];
   let reviews: Review[] = [];
   let comment = "<!-- milo:review:abc --><!-- milo:merge -->\n\nreport";
   const writes: string[] = [];
   const gh: GitHubClient = {
     async api<T>(endpoint: string, method = "GET"): Promise<T> {
       if (method !== "GET") writes.push(endpoint);
+      if (conflict && endpoint === "pulls/34/update-branch")
+        throw new Error("gh api: 422 merge conflict");
       const responses: Record<string, unknown> = {
         "issues/12": { ...issue(), labels: [{ name: "milo:dependencies" }] },
         "commits/abc/check-runs?per_page=100": { check_runs: runs },
@@ -594,9 +598,10 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     },
     async pages<T>(endpoint: string): Promise<T[]> {
       const responses: Record<string, unknown[]> = {
-        "pulls?state=open": [pr],
+        "pulls?state=open": open,
         "pulls/34/reviews": reviews,
         "issues/34/comments": [{ body: comment, user: { login: "milo" } }],
+        "issues/35/comments": [{ body: comment, user: { login: "milo" } }],
       };
       return (responses[endpoint] ?? []) as T[];
     },
@@ -647,6 +652,21 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   status = { state: "success", total_count: 1 };
   await runner.runReviews(repo);
   expect(writes).toEqual(["pulls/34/merge"]);
+  // A conflicted branch update is logged and skipped, so later PRs still run.
+  writes.length = 0;
+  conflict = true;
+  behind = 2;
+  open = [pr, { ...pr, number: 35, html_url: "https://example.test/pr/35" }];
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  try {
+    await runner.runReviews(repo);
+    expect(log).toHaveBeenCalledWith(
+      "https://example.test/pr/34: branch update refused; resolve conflicts with main",
+    );
+  } finally {
+    log.mockRestore();
+  }
+  expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
 });
 
 test("tasks cannot change agent instruction files", () =>
