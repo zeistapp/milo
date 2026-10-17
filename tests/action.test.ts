@@ -61,6 +61,18 @@ test("distributed action reads the caller's config from an external working dire
       expect(
         await command(["bash", "-c", script], { cwd: consumer }),
       ).toContain("Configuration valid");
+      // Shared schedules run task without a category; the CLI picks the work.
+      const stub = join(consumer, "stub");
+      await Bun.write(
+        join(stub, "src/cli.ts"),
+        'console.log(Bun.argv.slice(2).join(" "))',
+      );
+      process.env.MILO_ACTION_PATH = stub;
+      process.env.INPUT_ACTION = "task";
+      expect(
+        await command(["bash", "-c", script], { cwd: consumer }),
+      ).toContain("--period week task");
+      process.env.MILO_ACTION_PATH = root;
       process.env.INPUT_ACTION = "work";
       process.env.INPUT_NUMBER = "12; touch injected";
       await expect(

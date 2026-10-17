@@ -91,10 +91,7 @@ runs:
         if [ -n "$INPUT_PERIOD" ]; then args+=(--period "$INPUT_PERIOD"); fi
         if [ -n "$INPUT_SELF_REPO" ]; then args+=(--self-repo "$INPUT_SELF_REPO"); fi
         case "$INPUT_ACTION" in
-          validate|tick|reviews) args+=("$INPUT_ACTION") ;;
-          task)
-            test -n "$INPUT_CATEGORY" || { echo 'category is required'; exit 1; }
-            args+=(task) ;;
+          validate|tick|reviews|task) args+=("$INPUT_ACTION") ;;
           plan)
             args+=(plan)
             if [ "$INPUT_APPLY" = 'true' ]; then args+=(--apply); fi ;;
