@@ -669,3 +669,140 @@ test("tasks cannot change agent instruction files", () =>
     await Bun.write(join(root, "src.ts"), "ok");
     expect(await changes(root)).toBe(true);
   }));
+
+test("Milo commits and pushes nothing after untrusted code changes git config", () =>
+  temporary("milo-gitconfig-", async (folder) => {
+    const git = (root: string, ...args: string[]) =>
+      command(["git", ...args], { cwd: root });
+    const source = join(folder, "source");
+    const remote = join(folder, "remote.git");
+    await mkdir(source);
+    await git(source, "init", "-q", "-b", "main");
+    await git(source, "config", "user.name", "Test");
+    await git(source, "config", "user.email", "test@example.test");
+    await Bun.write(join(source, "file.txt"), "old\n");
+    await git(source, "add", ".");
+    await git(source, "commit", "-qm", "Initial");
+    await git(source, "clone", "-q", "--bare", source, remote);
+    const branch = () =>
+      git(remote, "branch", "--list", "milo/issue-12", "milo/issue-13");
+    // The agent is the untrusted code here: setup and check steps cannot write .git at all.
+    const tamper = join(folder, "tamper.txt");
+    const fakeAgent = join(folder, "agent.ts");
+    await Bun.write(
+      fakeAgent,
+      `import { appendFileSync } from "node:fs";
+await Bun.stdin.text();
+await Bun.write("file.txt", String(Date.now()));
+const mode = await Bun.file(${JSON.stringify(tamper)}).text();
+if (mode === "config") appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
+if (mode === "commondir") await Bun.write(".git/commondir", ".");
+await Bun.write(Bun.argv[2]!, "Report");`,
+    );
+    const pr: PullRequest = {
+      number: 34,
+      state: "open",
+      body: "",
+      html_url: "https://example.test/pr/34",
+      head: {
+        ref: "milo/issue-12",
+        sha: "",
+        repo: { full_name: "owner/repo" },
+      },
+      base: { ref: "main", sha: "" },
+    };
+    const gh: GitHubClient = {
+      async api<T>(endpoint: string, method = "GET"): Promise<T> {
+        if (endpoint === "issues/12" || endpoint === "issues/13")
+          return { ...issue(), number: Number(endpoint.slice(7)) } as T;
+        if (endpoint === "pulls" && method === "POST") return pr as T;
+        if (endpoint === "pulls/34") return pr as T;
+        if (endpoint.endsWith("/permission"))
+          return { permission: "admin" } as T;
+        return {} as T;
+      },
+      async pages<T>(endpoint: string): Promise<T[]> {
+        if (endpoint === "pulls/34/reviews")
+          return [
+            {
+              id: 1,
+              state: "CHANGES_REQUESTED",
+              commit_id: pr.head.sha,
+              user: { login: "owner" },
+              body: "Improve",
+            },
+          ] as T[];
+        return [];
+      },
+      async comment() {},
+      async viewer() {
+        return "milo";
+      },
+    };
+    const runner = new Runner(
+      {
+        agent: { command: [process.execPath, fakeAgent, "{output}"] },
+        repos: [],
+      },
+      () => gh,
+      async (_repo, root) => {
+        await git(folder, "clone", "-q", remote, root);
+        await git(root, "config", "user.name", "Test");
+        await git(root, "config", "user.email", "test@example.test");
+      },
+    );
+    const repo: Repo = {
+      name: "owner/repo",
+      setup: [],
+      checks: [{ command: ["true"] }],
+    };
+    // An untouched clone still publishes.
+    await Bun.write(tamper, "none");
+    await runner.work(repo, 12);
+    const head = await git(remote, "rev-parse", "milo/issue-12");
+    pr.head.sha = head;
+    await git(remote, "update-ref", "refs/pull/34/head", head);
+    await Bun.write(tamper, "config");
+    await expect(runner.review(repo, 34, true)).rejects.toThrow("git config");
+    expect(await git(remote, "rev-parse", "milo/issue-12")).toBe(head);
+    for (const mode of ["config", "commondir"]) {
+      await Bun.write(tamper, mode);
+      await expect(runner.work(repo, 13)).rejects.toThrow("git config");
+      expect(await branch()).toBe("milo/issue-12");
+    }
+  }));
+
+test("a global git config cannot run programs from Milo's trusted git", () =>
+  temporary("milo-global-", async (folder) => {
+    const root = join(folder, "repo");
+    const home = join(folder, "home");
+    const marker = join(folder, "ran");
+    await mkdir(root);
+    await mkdir(home);
+    await command(["git", "init", "-q"], { cwd: root });
+    await Bun.write(join(root, "file.txt"), "x");
+    const hook = join(folder, "hook.sh");
+    await Bun.write(hook, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
+    await command(["chmod", "+x", hook]);
+    await Bun.write(
+      join(home, ".gitconfig"),
+      `[core]\n\tfsmonitor = ${hook}\n`,
+    );
+    const previous = {
+      HOME: process.env.HOME,
+      XDG: process.env.XDG_CONFIG_HOME,
+    };
+    try {
+      process.env.HOME = home;
+      process.env.XDG_CONFIG_HOME = join(home, ".config");
+      expect(await changes(root)).toBeTrue();
+      expect(existsSync(marker)).toBeFalse();
+      // Plain git in the same environment does run it, so the check above is meaningful.
+      await command(["git", "status"], { cwd: root });
+      expect(existsSync(marker)).toBeTrue();
+    } finally {
+      process.env.HOME = previous.HOME;
+      if (previous.XDG === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous.XDG;
+    }
+  }));
