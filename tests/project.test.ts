@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { parseConfig } from "../src/config.ts";
+import { Category, categories, parse, parseConfig } from "../src/config.ts";
 import { temporary } from "../src/process.ts";
 import { inspectProject, projectContext } from "../src/project.ts";
 
@@ -223,6 +223,12 @@ test("configuration validates categories, checks and command boundaries", () => 
       repos: [{ name: "owner/repo", categories: ["made-up"] }],
     }),
   ).toThrow("Unknown maintenance category");
+});
+test("category parsing accepts every category and rejects prototype keys", () => {
+  for (const name of Object.keys(categories))
+    expect<string>(parse(Category, name)).toBe(name);
+  for (const name of ["toString", "__proto__", "constructor"])
+    expect(() => parse(Category, name)).toThrow("Unknown maintenance category");
 });
 describe("project profiling edge cases", () => {
   const inspect = (
