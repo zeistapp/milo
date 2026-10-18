@@ -52,6 +52,7 @@ function issue(body = "", state = "open"): Issue {
     body,
     state,
     html_url: "https://example.test/issue/12",
+    created_at: "2026-10-15T09:00:00Z",
     labels: [{ name: "milo:task" }, { name: "milo:ready" }],
   };
 }
@@ -381,12 +382,16 @@ test(
       const fakeAgent = join(folder, "agent.ts");
       const invocations = join(folder, "invocations.txt");
       const reviewPrompt = join(folder, "review-prompt.txt");
+      const workPrompt = join(folder, "work-prompt.txt");
       await Bun.write(
         fakeAgent,
         `const prompt = await Bun.stdin.text();
 const counter = Bun.file(${JSON.stringify(invocations)});
 await Bun.write(counter, String((await counter.exists() ? Number(await counter.text()) : 0) + 1));
-if (prompt.includes("Implement this ticket:")) await Bun.write("file.txt", "new\\n");
+if (prompt.includes("Implement this ticket:")) {
+  await Bun.write(${JSON.stringify(workPrompt)}, prompt);
+  if (!prompt.includes("stale")) await Bun.write("file.txt", "new\\n");
+}
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
 if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
 await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
@@ -410,6 +415,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
         ],
       };
       const comments: { body: string; user: { login: string } }[] = [];
+      const closed: unknown[] = [];
       const reviews: Review[] = [];
       const prs: PullRequest[] = [];
       let ticketReads = 0;
@@ -420,12 +426,16 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
           payload?: unknown,
         ): Promise<T> {
           let result: unknown;
-          if (endpoint === "issues/12")
+          if (endpoint === "issues/15" && method === "PATCH")
+            closed.push(payload);
+          else if (endpoint === "issues/12")
             result = issue("<!-- milo:dependencies:key -->");
           else if (endpoint === "issues/13")
             result = { ...issue(), number: 13 };
           else if (endpoint === "issues/14")
             result = { ...issue(`edit ${++ticketReads}`), number: 14 };
+          else if (endpoint === "issues/15")
+            result = { ...issue("stale"), number: 15 };
           else if (endpoint.match(/^issues\/1[34]\/labels$/)) result = {};
           else if (endpoint === "pulls" && method === "POST") {
             const body = payload as { body: string };
@@ -484,6 +494,10 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       );
       await runner.work(repo, 12);
       expect(await git(remote, "show", "milo/issue-12:file.txt")).toBe("new");
+      // The agent checks the ticket against what changed since it was written.
+      const prompt = await Bun.file(workPrompt).text();
+      expect(prompt).toContain("git log --since=2026-10-15T09:00:00Z");
+      expect(prompt).toContain("If the evidence or plan no longer holds");
       expect(prs[0]?.body).toContain("Closes #12");
       const originalHead = await head();
       await runner.work(repo, 12);
@@ -540,6 +554,11 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       // An edit during the run stops it before anything is pushed.
       await expect(runner.work(repo, 14)).rejects.toThrow("Ticket changed");
       expect(await git(remote, "branch", "--list", "milo/issue-14")).toBe("");
+      // A stale ticket closes with the agent's explanation instead of becoming a PR.
+      await runner.work(repo, 15);
+      expect(prs).toEqual([]);
+      expect(closed).toEqual([{ state: "closed", state_reason: "completed" }]);
+      expect(comments.at(-1)?.body).toContain("Report with evidence");
     }),
   15_000,
 );

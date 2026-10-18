@@ -17,6 +17,7 @@ const ticket = (number: number, category: string): Issue => ({
   body: `<!-- milo:${category}:2026-W42 -->`,
   state: "open",
   html_url: "",
+  created_at: "2026-10-15T09:00:00Z",
   labels: [
     { name: "milo:task" },
     { name: "milo:ready" },
