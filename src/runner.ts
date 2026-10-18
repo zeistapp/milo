@@ -739,10 +739,17 @@ export class Runner {
     );
     if (behind_by) {
       // The new head is reviewed and checked again before a later run merges it.
-      await gh.api(`pulls/${pr.number}/update-branch`, "PUT", {
-        expected_head_sha: pr.head.sha,
-      });
-      console.log(`${pr.html_url}: updated from ${pr.base.ref}`);
+      try {
+        await gh.api(`pulls/${pr.number}/update-branch`, "PUT", {
+          expected_head_sha: pr.head.sha,
+        });
+        console.log(`${pr.html_url}: updated from ${pr.base.ref}`);
+      } catch {
+        // A conflicted PR must not stop later PRs in runReviews.
+        console.log(
+          `${pr.html_url}: branch update refused; resolve conflicts with ${pr.base.ref}`,
+        );
+      }
       return;
     }
     try {
