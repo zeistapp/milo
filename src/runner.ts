@@ -35,6 +35,7 @@ export const Issue = z.object({
   labels: z.array(z.object({ name: z.string() })),
   pull_request: z.unknown().optional(),
   html_url: z.string(),
+  created_at: z.string(),
 });
 export type Issue = z.infer<typeof Issue>;
 const Ref = z.object({ ref: z.string(), sha: z.string() });
@@ -614,8 +615,17 @@ export class Runner {
           report = await runAgent(
             this.config,
             root,
+            // Tickets wait for approval while the code moves on; a stale one should close, not become a PR.
             "Implement this ticket:\n" +
-              JSON.stringify({ title: issue.title, body: issue.body }) +
+              JSON.stringify({
+                title: issue.title,
+                body: issue.body,
+                created_at: issue.created_at,
+              }) +
+              "\nThe ticket was written against an earlier commit. Before changing anything, check its evidence and plan " +
+              `against the current code; \`git log --since=${issue.created_at}\` shows what changed since. ` +
+              "If the evidence or plan no longer holds, make no changes and explain why in your report; " +
+              "the ticket then closes with that report." +
               "\n" +
               projectContext(project),
           );
