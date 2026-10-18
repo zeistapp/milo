@@ -746,6 +746,8 @@ await Bun.write("file.txt", String(Date.now()));
 const mode = await Bun.file(${JSON.stringify(tamper)}).text();
 if (mode === "config") appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
 if (mode === "commondir") await Bun.write(".git/commondir", ".");
+if (mode === "worktree") await Bun.write(".git/config.worktree", "[core]\\n\\thooksPath = .\\n");
+if (mode === "none") await Bun.write(".git/config.worktree", "");
 await Bun.write(Bun.argv[2]!, "Report");`,
     );
     const pr: PullRequest = {
@@ -805,7 +807,7 @@ await Bun.write(Bun.argv[2]!, "Report");`,
       setup: [],
       checks: [{ command: ["true"] }],
     };
-    // An untouched clone still publishes.
+    // An untouched clone still publishes, even with the empty config.worktree Claude's sandbox leaves.
     await Bun.write(tamper, "none");
     await runner.work(repo, 12);
     const head = await git(remote, "rev-parse", "milo/issue-12");
@@ -816,11 +818,13 @@ await Bun.write(Bun.argv[2]!, "Report");`,
       /git config: .*tampered/,
     );
     expect(await git(remote, "rev-parse", "milo/issue-12")).toBe(head);
-    for (const mode of ["config", "commondir"]) {
+    for (const [mode, error] of [
+      ["config", "[milo], tampered"],
+      ["commondir", ".git/commondir"],
+      ["worktree", ".git/config.worktree"],
+    ] as const) {
       await Bun.write(tamper, mode);
-      await expect(runner.work(repo, 13)).rejects.toThrow(
-        mode === "config" ? "[milo], tampered" : ".git/commondir",
-      );
+      await expect(runner.work(repo, 13)).rejects.toThrow(error);
       expect(await branch()).toBe("milo/issue-12");
     }
   }));

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -287,9 +287,11 @@ const gitConfig = (root: string) => readFile(join(root, ".git", "config"));
 // rewrite config after this check; running untrusted code in a separate copy would close that.
 async function assertGitIntact(root: string, snapshot: Buffer): Promise<void> {
   const config = await gitConfig(root);
-  const added = ["commondir", "config.worktree"].filter((name) =>
-    existsSync(join(root, ".git", name)),
-  );
+  // Claude's Linux sandbox leaves an empty config.worktree as a mount point; empty sets nothing.
+  const added = ["commondir", "config.worktree"].filter((name) => {
+    const file = lstatSync(join(root, ".git", name), { throwIfNoEntry: false });
+    return file && (name === "commondir" || !file.isFile() || file.size > 0);
+  });
   if (config.equals(snapshot) && !added.length) return;
   // Names only: values could carry whatever untrusted code wrote.
   const lines = (text: Buffer) => new Set(text.toString().split("\n"));
