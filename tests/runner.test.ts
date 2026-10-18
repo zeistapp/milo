@@ -696,7 +696,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
 });
 
-test("tasks cannot change agent instruction files", () =>
+test("tasks cannot change agent instruction or CI action files", () =>
   temporary("milo-protected-", async (root) => {
     await command(["git", "init", "--quiet"], { cwd: root });
     for (const file of [
@@ -704,6 +704,8 @@ test("tasks cannot change agent instruction files", () =>
       "CLAUDE.md",
       "app/CLAUDE.md",
       ".claude/rules/a.md",
+      "action.yml",
+      "actions/setup/action.yaml",
     ]) {
       await mkdir(join(root, file, ".."), { recursive: true });
       await Bun.write(join(root, file), "changed policy");

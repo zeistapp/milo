@@ -331,7 +331,13 @@ export async function changes(root: string): Promise<boolean> {
         file
           .split("/")
           .some((part) =>
-            ["AGENTS.md", "CLAUDE.md", ".claude"].includes(part),
+            [
+              "AGENTS.md",
+              "CLAUDE.md",
+              ".claude",
+              "action.yml",
+              "action.yaml",
+            ].includes(part),
           ) ||
         [".github/", ".milo/"].some((prefix) => file.startsWith(prefix)) ||
         [".gitmodules", "milo.config.json"].includes(file),

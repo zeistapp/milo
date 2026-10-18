@@ -10,8 +10,9 @@ jobs:
     steps:
       - id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-      # Branch protection holds the merge until required CI passes; majors wait for a human.
-      - if: contains(fromJSON('["version-update:semver-minor","version-update:semver-patch"]'), steps.metadata.outputs.update-type)
+      # Branch protection holds the merge until required CI passes. Majors and action updates wait for a human:
+      # actions run in consumers' maintenance jobs with their secrets.
+      - if: steps.metadata.outputs.package-ecosystem != 'github_actions' && contains(fromJSON('["version-update:semver-minor","version-update:semver-patch"]'), steps.metadata.outputs.update-type)
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

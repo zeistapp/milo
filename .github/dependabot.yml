@@ -1,10 +1,15 @@
 version: 2
+# Consumers run main with their secrets; the cooldown lets a compromised release surface before it lands.
 updates:
   - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
