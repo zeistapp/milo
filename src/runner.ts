@@ -286,13 +286,18 @@ const gitConfig = (root: string) => readFile(join(root, ".git", "config"));
 // CEILING: a process that outlives its step (the agent is not in the step sandbox) could
 // rewrite config after this check; running untrusted code in a separate copy would close that.
 async function assertGitIntact(root: string, snapshot: Buffer): Promise<void> {
-  if (
-    !(await gitConfig(root)).equals(snapshot) ||
-    ["commondir", "config.worktree"].some((name) =>
-      existsSync(join(root, ".git", name)),
-    )
-  )
-    throw new Error("Untrusted code changed the clone's git config");
+  const config = await gitConfig(root);
+  const added = ["commondir", "config.worktree"].filter((name) =>
+    existsSync(join(root, ".git", name)),
+  );
+  if (config.equals(snapshot) && !added.length) return;
+  // Names only: values could carry whatever untrusted code wrote.
+  const lines = (text: Buffer) => new Set(text.toString().split("\n"));
+  const changed = lines(snapshot).symmetricDifference(lines(config));
+  const names = [...changed].map((line) => line.split("=")[0]?.trim());
+  throw new Error(
+    `Untrusted code changed the clone's git config: ${[...new Set([...names, ...added.map((name) => `.git/${name}`)])].join(", ")}`,
+  );
 }
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);

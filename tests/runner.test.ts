@@ -812,11 +812,15 @@ await Bun.write(Bun.argv[2]!, "Report");`,
     pr.head.sha = head;
     await git(remote, "update-ref", "refs/pull/34/head", head);
     await Bun.write(tamper, "config");
-    await expect(runner.review(repo, 34, true)).rejects.toThrow("git config");
+    await expect(runner.review(repo, 34, true)).rejects.toThrow(
+      /git config: .*tampered/,
+    );
     expect(await git(remote, "rev-parse", "milo/issue-12")).toBe(head);
     for (const mode of ["config", "commondir"]) {
       await Bun.write(tamper, mode);
-      await expect(runner.work(repo, 13)).rejects.toThrow("git config");
+      await expect(runner.work(repo, 13)).rejects.toThrow(
+        mode === "config" ? "[milo], tampered" : ".git/commondir",
+      );
       expect(await branch()).toBe("milo/issue-12");
     }
   }));
