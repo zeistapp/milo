@@ -33,7 +33,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 }
 ```
 
-2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo.
+2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo. To give Milo its own bot identity instead, [run it as a GitHub App](docs/usage.md#run-milo-as-a-github-app).
 
 3. Add `.github/workflows/milo.yml`. This one file stays the same forever: Milo's schedule, task list and pinned actions come from `zeistapp/milo@main`.
 
@@ -51,6 +51,7 @@ jobs:
     # Named, because GitHub only inherits secrets within one owner. Keep them in the maintenance environment.
     secrets:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```

@@ -26,6 +26,8 @@ on:
     secrets:
       MILO_GITHUB_TOKEN:
         required: false
+      MILO_APP_PRIVATE_KEY:
+        required: false
       ANTHROPIC_API_KEY:
         required: false
       OPENAI_API_KEY:
@@ -45,6 +47,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A GitHub App gives Milo its own bot identity; without one Milo acts as MILO_GITHUB_TOKEN's owner.
+      # CEILING: the token covers the calling repo's owner and lasts one hour, so other owners' targets
+      # and a longer run fail until the next run. Mint a token per owner, or refresh it in the CLI, if that bites.
+      - name: Create GitHub App token
+        id: app
+        if: vars.MILO_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.MILO_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MILO_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Validate credentials and agent version for the configured provider
         id: preflight
         env:
@@ -53,12 +66,12 @@ jobs:
           DEFAULT_CLAUDE_VERSION: '2.1.296'
           CODEX_VERSION: ${{ vars.CODEX_VERSION }}
           CLAUDE_VERSION: ${{ vars.CLAUDE_VERSION }}
-          MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+          MILO_GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.MILO_GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           provider=$(jq -r '.agent.provider // "custom"' "$CONFIG") || { echo "Cannot read agent.provider from $CONFIG"; exit 1; }
-          test -n "$MILO_GITHUB_TOKEN" || { echo 'Add MILO_GITHUB_TOKEN to the maintenance environment and pass it from milo.yml'; exit 1; }
+          test -n "$MILO_GITHUB_TOKEN" || { echo 'Add MILO_GITHUB_TOKEN, or MILO_APP_CLIENT_ID and MILO_APP_PRIVATE_KEY, to the maintenance environment and pass the secret from milo.yml'; exit 1; }
           case "$provider" in
             claude)
               test -n "$ANTHROPIC_API_KEY" || { echo 'Add ANTHROPIC_API_KEY to the maintenance environment'; exit 1; }
@@ -83,6 +96,7 @@ jobs:
           codex-version: ${{ steps.preflight.outputs.codex-version }}
           claude-version: ${{ steps.preflight.outputs.claude-version }}
         env:
-          GH_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app.outputs.token || secrets.MILO_GITHUB_TOKEN }}
+          MILO_APP_SLUG: ${{ steps.app.outputs.app-slug }}
           CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

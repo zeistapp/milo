@@ -99,11 +99,25 @@ These controls do not isolate all host processes. Use disposable runners for tru
 
 Existing `agent.command` configs still work for custom agents. Choose either `provider` or `command`, not both. Put model flags directly in a custom command. The command must read stdin, write its report to `{output}`, and enforce `{sandbox}`. Milo retains agent credentials for agent execution and strips common provider keys from repository setup/check subprocesses. A GitHub token is separate and grants repository access, not model access.
 
+## Run Milo as a GitHub App
+
+With a personal token, Milo's issues and PRs show as you, so you can't approve its PRs, and the token expires. A GitHub App gives Milo its own `<app-name>[bot]` identity for issues, PRs, comments and commits, with tokens that renew on every run.
+
+1. [Register an App](https://github.com/settings/apps/new?url=https://github.com/zeistapp/milo&public=false&webhook_active=false&contents=write&issues=write&pull_requests=write&checks=read&statuses=read). The link fills in the permissions Milo needs: Contents, Issues and Pull requests write; Checks and Commit statuses read. Pick any unused name. For an organization, open the same link with `https://github.com/organizations/ORG/settings/apps/new` instead.
+2. On the App's page, note the Client ID and generate a private key.
+3. Install the App on every repo Milo maintains.
+4. In each repo's `maintenance` environment, add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY` (the whole `.pem` file).
+5. Add `MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}` to the `secrets:` block of each repo's `milo.yml`.
+
+Milo uses the App whenever `MILO_APP_CLIENT_ID` is set and falls back to `MILO_GITHUB_TOKEN` otherwise. Delete the personal token once a run succeeds. After the switch, Milo reviews each open PR once more, because it no longer recognises reviews it posted under the old identity.
+
+An App token covers repos under the calling repo's owner, so targets under another owner still need `MILO_GITHUB_TOKEN`. It also lasts one hour: a run that goes longer loses GitHub access partway, and the next run picks up the remaining scans. A ticket that takes over an hour to work is retried rather than blocked, so raise `agent.timeoutSeconds` with care.
+
 ## Host and distribute
 
 Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY` plus a fine-grained `MILO_GITHUB_TOKEN` scoped to this repo. Give the token Contents, Issues and Pull requests write permissions, and Metadata read access. Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan every category, then add `milo:ready` to the findings you want worked. Scheduled runners scan again at their configured intervals; `autoReady: []` requires approval before agent edits.
 
-Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `OPENAI_API_KEY` as secrets, plus an exact tested `CODEX_VERSION` as an environment variable. For Claude, use `ANTHROPIC_API_KEY` instead and change the config provider; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. GitHub App installation tokens need additional bot identity handling and are not supported yet. The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
+Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `OPENAI_API_KEY` as secrets, plus an exact tested `CODEX_VERSION` as an environment variable. For Claude, use `ANTHROPIC_API_KEY` instead and change the config provider; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. Or [run Milo as a GitHub App](#run-milo-as-a-github-app). The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
 Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every two hours and calls `consumer.yml`. That workflow calls the shared `maintenance.yml` once for tasks and once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Milo works any approved custom ticket. Add a `milo:<category>` label if that category is in `autoMerge` and you want Milo to merge it.
 
