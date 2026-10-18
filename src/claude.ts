@@ -98,14 +98,8 @@ export async function runClaude(
     timeoutSeconds,
   };
   const version = await command(["claude", "--version"], options);
-  const match = /^(\d+)\.(\d+)\.(\d+)\b/.exec(version);
-  if (
-    !match ||
-    Number(match[1]) < 2 ||
-    (Number(match[1]) === 2 &&
-      (Number(match[2]) < 1 ||
-        (Number(match[2]) === 1 && Number(match[3]) < 296)))
-  )
+  const match = /^\d+\.\d+\.\d+\b/.exec(version);
+  if (!match || Bun.semver.order(match[0], minimumClaudeVersion) < 0)
     throw new Error(`Claude Code ${minimumClaudeVersion}+ is required`);
   const stdout = await command(claudeCommand(root, readOnly, model), {
     ...options,
