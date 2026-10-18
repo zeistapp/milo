@@ -115,7 +115,8 @@ Before starting, read the repository root AGENTS.md and CLAUDE.md, plus any in d
 Stay within the ticket scope. Do not commit, push, merge, publish, change CI/security policy, or access credentials.
 Do not delete user data or remove features. Prefer a small root-cause fix. Use installed APIs and current official documentation.
 Run relevant checks, report limitations honestly and provide evidence for findings. The harness owns commits and publication.
-Finish with a concise report. Never include credentials, secret values or sensitive exploit details in the report.`;
+Finish with a report. Never include credentials, secret values or sensitive exploit details in the report.
+The report is published as-is as the ticket, pull request description or review comment, and maintainers read many of them. Use as few words as the reader needs to decide and act. Lead with the point. Prefer short bullets with file:line references over prose and quoted code. Omit restated ticket or diff text, process narration, harness check lists, things that are fine or unchanged, and non-blocking nits. Keep a review or PR description under 120 words and a ticket under 200.`;
 const labels = {
   "milo:task": "64748b",
   "milo:ready": "16a34a",
