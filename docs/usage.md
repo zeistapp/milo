@@ -104,7 +104,7 @@ Existing `agent.command` configs still work for custom agents. Choose either `pr
 With a personal token, Milo's issues and PRs show as you, so you can't approve its PRs, and the token expires. A GitHub App gives Milo its own `<app-name>[bot]` identity for issues, PRs, comments and commits, with tokens that renew on every run.
 
 1. [Register an App](https://github.com/settings/apps/new?url=https://github.com/zeistapp/milo&public=false&webhook_active=false&contents=write&issues=write&pull_requests=write&checks=read&statuses=read). The link fills in the permissions Milo needs: Contents, Issues and Pull requests write; Checks and Commit statuses read. Pick any unused name. For an organization, open the same link with `https://github.com/organizations/ORG/settings/apps/new` instead.
-2. On the App's page, note the Client ID and generate a private key.
+2. On the App's settings page, note the Client ID. Then open **Credentials → Key pairs** in the left sidebar and click **New key** to download a private key.
 3. Install the App on every repo Milo maintains.
 4. In each repo's `maintenance` environment, add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY` (the whole `.pem` file).
 5. Add `MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}` to the `secrets:` block of each repo's `milo.yml`.
