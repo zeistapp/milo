@@ -16,14 +16,7 @@
         "performance"
       ],
       "autoReady": ["dependencies"],
-      "autoMerge": [
-        "dependencies",
-        "security",
-        "bugs",
-        "architecture",
-        "simplify",
-        "performance"
-      ]
+      "autoMerge": ["dependencies", "simplify", "performance"]
     }
   ]
 }
