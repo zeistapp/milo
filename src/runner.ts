@@ -1,4 +1,5 @@
-import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { runClaude } from "./claude.ts";
@@ -216,12 +217,15 @@ export async function mergeBlocker(
   root: string,
   base: string,
 ): Promise<string | undefined> {
-  const from = await command(["git", "merge-base", base, "HEAD"], {
-    cwd: root,
-  });
-  const stats = await command(
-    ["git", "diff", "--numstat", "--no-renames", from, "HEAD", "--"],
-    { cwd: root },
+  const from = await git(root, "merge-base", base, "HEAD");
+  const stats = await git(
+    root,
+    "diff",
+    "--numstat",
+    "--no-renames",
+    from,
+    "HEAD",
+    "--",
   );
   let lines = 0;
   const manifests: string[] = [];
@@ -242,7 +246,7 @@ export async function mergeBlocker(
   for (const path of manifests) {
     const [before, after] = await Promise.all(
       [from, "HEAD"].map((ref) =>
-        command(["git", "show", `${ref}:${path}`], { cwd: root }).then(
+        git(root, "show", `${ref}:${path}`).then(
           (text) => {
             const manifest = parse(Manifest, JSON.parse(text));
             return new Map(
@@ -270,6 +274,25 @@ export async function mergeBlocker(
     }
   }
 }
+// Git config can make git run programs, and trusted git holds the write token. Trusted git
+// skips global and system config, which untrusted code running as the same user could edit,
+// and reads only the clone's config, which assertGitIntact pins to its post-clone bytes.
+const gitEnv = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+const git = (root: string, ...args: string[]) =>
+  command(["git", ...args], { cwd: root, env: gitEnv });
+const gitConfig = (root: string) => readFile(join(root, ".git", "config"));
+// Call after untrusted code runs in the clone and before trusted git runs there again.
+// CEILING: a process that outlives its step (the agent is not in the step sandbox) could
+// rewrite config after this check; running untrusted code in a separate copy would close that.
+async function assertGitIntact(root: string, snapshot: Buffer): Promise<void> {
+  if (
+    !(await gitConfig(root)).equals(snapshot) ||
+    ["commondir", "config.worktree"].some((name) =>
+      existsSync(join(root, ".git", name)),
+    )
+  )
+    throw new Error("Untrusted code changed the clone's git config");
+}
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);
   // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
@@ -293,15 +316,13 @@ export async function clone(repo: Repo, root: string): Promise<void> {
     ["core.hooksPath", "/dev/null"],
     ["credential.helper", "!gh auth git-credential"],
   ] as const) {
-    await command(["git", "config", key, value], { cwd: root });
+    await git(root, "config", key, value);
   }
 }
 export async function changes(root: string): Promise<boolean> {
-  await command(["git", "add", "--all"], { cwd: root });
+  await git(root, "add", "--all");
   const files = (
-    await command(["git", "diff", "--cached", "--name-only", "-z"], {
-      cwd: root,
-    })
+    await git(root, "diff", "--cached", "--name-only", "-z")
   ).split("\0");
   if (
     files.some(
@@ -317,9 +338,7 @@ export async function changes(root: string): Promise<boolean> {
   ) {
     throw new Error("Task changed protected automation or policy files");
   }
-  return Boolean(
-    await command(["git", "diff", "--cached", "--stat"], { cwd: root }),
-  );
+  return Boolean(await git(root, "diff", "--cached", "--stat"));
 }
 export async function runAgent(
   config: Config,
@@ -456,6 +475,7 @@ export class Runner {
     return temporary("milo-scan-", async (folder) => {
       const root = join(folder, "repo");
       await this.cloneRepo(repo, root);
+      const config = await gitConfig(root);
       const report = await runAgent(
         this.config,
         root,
@@ -469,7 +489,8 @@ export class Runner {
           projectContext(await inspectProject(root, repo)),
         true,
       );
-      if (await command(["git", "status", "--porcelain"], { cwd: root }))
+      await assertGitIntact(root, config);
+      if (await git(root, "status", "--porcelain"))
         throw new Error("Read-only scan changed files");
       return finding(report);
     });
@@ -487,10 +508,10 @@ export class Runner {
     root: string,
     original: string,
     baseline: Project,
+    config: Buffer,
   ): Promise<Project> {
-    if (
-      (await command(["git", "rev-parse", "HEAD"], { cwd: root })) !== original
-    )
+    await assertGitIntact(root, config);
+    if ((await git(root, "rev-parse", "HEAD")) !== original)
       throw new Error("Agent changed commit history");
     const after = await inspectProject(root, repo);
     // Install from the resulting lockfile, rather than trusting agent-modified node_modules.
@@ -504,6 +525,7 @@ export class Runner {
       ).values(),
     ];
     await steps(checks, root);
+    await assertGitIntact(root, config);
     return { ...after, checks };
   }
   private checkReport(project: Project): string {
@@ -554,30 +576,26 @@ export class Runner {
       await temporary("milo-work-", async (folder) => {
         const root = join(folder, "repo");
         await this.cloneRepo(repo, root);
-        const base = await command(["git", "branch", "--show-current"], {
-          cwd: root,
-        });
-        const original = await command(["git", "rev-parse", "HEAD"], {
-          cwd: root,
-        });
-        const remote = await command(
-          ["git", "ls-remote", "--heads", "origin", `refs/heads/${branch}`],
-          { cwd: root },
+        const config = await gitConfig(root);
+        const base = await git(root, "branch", "--show-current");
+        const original = await git(root, "rev-parse", "HEAD");
+        const remote = await git(
+          root,
+          "ls-remote",
+          "--heads",
+          "origin",
+          `refs/heads/${branch}`,
         );
         let report: string;
         let project: Project;
         if (remote) {
-          await command(["git", "fetch", "origin", `refs/heads/${branch}`], {
-            cwd: root,
-          });
-          await command(["git", "checkout", "--detach", "FETCH_HEAD"], {
-            cwd: root,
-          });
+          await git(root, "fetch", "origin", `refs/heads/${branch}`);
+          await git(root, "checkout", "--detach", "FETCH_HEAD");
           project = await this.prepare(repo, root);
           report =
             "Recovered an existing task branch after interrupted publication. Review the diff before merging.";
         } else {
-          await command(["git", "checkout", "-b", branch], { cwd: root });
+          await git(root, "checkout", "-b", branch);
           project = await this.prepare(repo, root);
           report = await runAgent(
             this.config,
@@ -587,7 +605,13 @@ export class Runner {
               "\n" +
               projectContext(project),
           );
-          project = await this.checkedChanges(repo, root, original, project);
+          project = await this.checkedChanges(
+            repo,
+            root,
+            original,
+            project,
+            config,
+          );
           await recheck();
           if (!(await changes(root))) {
             await gh.comment(
@@ -602,14 +626,8 @@ export class Runner {
             });
             return;
           }
-          await command(
-            ["git", "commit", "-m", `Maintenance for issue #${number}`],
-            { cwd: root },
-          );
-          await command(
-            ["git", "push", "origin", `HEAD:refs/heads/${branch}`],
-            { cwd: root },
-          );
+          await git(root, "commit", "-m", `Maintenance for issue #${number}`);
+          await git(root, "push", "origin", `HEAD:refs/heads/${branch}`);
         }
         await recheck();
         const pr = parse(
@@ -780,30 +798,21 @@ export class Runner {
     await temporary("milo-review-", async (folder) => {
       const root = join(folder, "repo");
       await this.cloneRepo(repo, root);
-      await command(["git", "fetch", "origin", `refs/pull/${number}/head`], {
-        cwd: root,
-      });
-      await command(["git", "checkout", "--detach", "FETCH_HEAD"], {
-        cwd: root,
-      });
-      if (
-        (await command(["git", "rev-parse", "HEAD"], { cwd: root })) !==
-        pr.head.sha
-      )
+      const config = await gitConfig(root);
+      await git(root, "fetch", "origin", `refs/pull/${number}/head`);
+      await git(root, "checkout", "--detach", "FETCH_HEAD");
+      if ((await git(root, "rev-parse", "HEAD")) !== pr.head.sha)
         throw new Error("PR changed during checkout; retry");
       if (!revise) {
         const project = await inspectProject(root, repo);
-        const diff = await command(
-          [
-            "git",
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            pr.base.sha,
-            "HEAD",
-            "--",
-          ],
-          { cwd: root },
+        const diff = await git(
+          root,
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          pr.base.sha,
+          "HEAD",
+          "--",
         );
         const ticket = await this.ticket(gh, pr);
         const report = await runAgent(
@@ -828,7 +837,8 @@ export class Runner {
         validatePR(current, repo);
         if (current.head.sha !== pr.head.sha)
           throw new Error("PR changed during review; retry");
-        if (await command(["git", "status", "--porcelain"], { cwd: root }))
+        await assertGitIntact(root, config);
+        if (await git(root, "status", "--porcelain"))
           throw new Error("Read-only review changed files");
         let marker = reviewMarker(pr.head.sha);
         let note = "";
@@ -864,7 +874,13 @@ export class Runner {
           "\n" +
           projectContext(project),
       );
-      project = await this.checkedChanges(repo, root, pr.head.sha, project);
+      project = await this.checkedChanges(
+        repo,
+        root,
+        pr.head.sha,
+        project,
+        config,
+      );
       if (!(await changes(root))) {
         console.log("No revision produced; the PR still needs human attention");
         return;
@@ -879,19 +895,13 @@ export class Runner {
         ))
       )
         throw new Error("Review request withdrawn; retry");
-      await command(
-        ["git", "commit", "-m", `Address review for PR #${number}`],
-        { cwd: root },
-      );
-      await command(
-        [
-          "git",
-          "push",
-          `--force-with-lease=refs/heads/${pr.head.ref}:${pr.head.sha}`,
-          "origin",
-          `HEAD:refs/heads/${pr.head.ref}`,
-        ],
-        { cwd: root },
+      await git(root, "commit", "-m", `Address review for PR #${number}`);
+      await git(
+        root,
+        "push",
+        `--force-with-lease=refs/heads/${pr.head.ref}:${pr.head.sha}`,
+        "origin",
+        `HEAD:refs/heads/${pr.head.ref}`,
       );
       await gh.comment(
         number,
