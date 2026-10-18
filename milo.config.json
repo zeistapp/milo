@@ -10,21 +10,19 @@
       "categories": [
         "dependencies",
         "security",
+        "bugs",
         "architecture",
-        "cleanup",
-        "organisation",
-        "performance",
-        "modernisation"
+        "simplify",
+        "performance"
       ],
       "autoReady": ["dependencies"],
       "autoMerge": [
         "dependencies",
         "security",
+        "bugs",
         "architecture",
-        "cleanup",
-        "organisation",
-        "performance",
-        "modernisation"
+        "simplify",
+        "performance"
       ]
     }
   ]

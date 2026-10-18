@@ -10,7 +10,7 @@ Use the five default triage labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context layout: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+Single-context layout: root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Commit identity
 

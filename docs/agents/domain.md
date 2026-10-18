@@ -4,7 +4,7 @@ This repo uses a single-context layout.
 
 ## Before exploring
 
-Read root `CONTEXT.md` and relevant decisions in `docs/adr/`.
+Read root `GLOSSARY.md` and relevant decisions in `docs/adr/`.
 
 If they do not exist, proceed silently. Domain modeling creates them when terminology or architectural decisions are resolved; do not create empty documents just to satisfy this layout.
 

@@ -9,36 +9,51 @@ export function parse<T extends z.ZodType>(
   if (!result.success) throw new Error(z.prettifyError(result.error));
   return result.data;
 }
-export const Category = z.enum(
+const Current = z.enum(
   [
     "dependencies",
     "security",
+    "bugs",
     "architecture",
-    "cleanup",
-    "organisation",
+    "simplify",
     "performance",
-    "modernisation",
   ],
   { error: "Unknown maintenance category" },
 );
+// Retired names still parse, so older configs, CLI calls and ticket labels keep working.
+export const retiredCategories = {
+  cleanup: "simplify",
+  modernisation: "simplify",
+  organisation: "architecture",
+} as const satisfies Record<string, z.infer<typeof Current>>;
+export const Category = z.preprocess(
+  (value) =>
+    typeof value === "string" && Object.hasOwn(retiredCategories, value)
+      ? retiredCategories[value as keyof typeof retiredCategories]
+      : value,
+  Current,
+);
 export type Category = z.infer<typeof Category>;
+export const categoryNames = Current.options;
+// Each scan stays in its area, with its own evidence bar, so a finding has one obvious home.
 export const categories = {
   dependencies:
-    "Upgrade compatible dependencies and lockfiles. Consult current official release notes. Keep major upgrades separate.",
+    "Upgrade compatible dependencies and lockfiles, including any with known vulnerabilities. Consult current official release notes. Keep major upgrades separate.",
   security:
-    "Review dependency vulnerabilities and security-sensitive code. Fix evidenced issues. Never publish credentials or sensitive exploit details.",
+    "Review security-sensitive code: authentication, authorisation, injection, secret handling and data crossing trust boundaries. Show the exploit path. " +
+    "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. Add Zod only where it replaces hand-written validation or unchecked casts. " +
+    "Never publish credentials or sensitive exploit details.",
+  bugs:
+    "Find behaviour that is wrong today: unhandled edge cases and errors, races, state that can get stuck, and code that contradicts its tests, types or docs. " +
+    "Show the failing input or trace the fault, and add a test that fails before the fix.",
   architecture:
-    "Trace important flows. Make one small architectural improvement backed by evidence, preserving the established framework and build patterns.",
-  cleanup:
-    "Remove proven dead code and duplication. Preserve public APIs and behaviour; inspect every caller of shared code.",
-  organisation:
-    "Improve navigation, naming and documentation where it helps maintenance. Update affected imports, exports and links.",
+    "Find friction where future changes will land: start from hot spots in recent git history, then trace those flows. Look for shallow modules, one concept spread across many files, coupling that leaks across seams, and names that hide what a module does or contradict the glossary; apply the deletion test. " +
+    "Propose one deepening that improves locality and testability: the modules involved, the smaller interface and how tests move to it. Preserve the established framework, build patterns and ADRs.",
+  simplify:
+    "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +
+    "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code.",
   performance:
     "Measure a bottleneck, establish a baseline and optimise it. Do not claim improvements without measurements.",
-  modernisation:
-    "Replace dated JS, TS and CSS with modern native features where the result is shorter and clearer, within the project's supported runtimes and browser targets. " +
-    "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. " +
-    "Prefer inference, satisfies and as const over annotations and assertions. Add Zod only where it replaces hand-written validation or unchecked casts. Preserve behaviour.",
 } satisfies Record<Category, string>;
 export const Period = z.enum(["day", "week", "month"], {
   error: "period must be day, week, or month",
@@ -61,6 +76,8 @@ const Step = z.object({
     .optional(),
 });
 export type Step = z.infer<typeof Step>;
+// Two retired names can map to one category; scan it once.
+const unique = <T>(list: T[]) => [...new Set(list)];
 const Repo = z
   .object({
     name: z
@@ -69,9 +86,10 @@ const Repo = z
     categories: z
       .array(Category)
       .min(1, "Select at least one category")
+      .transform(unique)
       .optional(),
-    autoReady: z.array(Category).optional(),
-    autoMerge: z.array(Category).optional(),
+    autoReady: z.array(Category).transform(unique).optional(),
+    autoMerge: z.array(Category).transform(unique).optional(),
     setup: z.array(Step).optional(),
     checks: z
       .array(Step)

@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config, Repo } from "../src/config.ts";
+import { type Config, parseConfig, type Repo } from "../src/config.ts";
 import { type CommandOptions, command, temporary } from "../src/process.ts";
 import {
   changes,
   finding,
   type GitHubClient,
   type Issue,
+  issueCategory,
   latestRequests,
   mergeBlocker,
   type PullRequest,
@@ -19,6 +20,30 @@ import {
   validateIssue,
   validatePR,
 } from "../src/runner.ts";
+
+test("retired categories map to their replacements in tickets and config", () => {
+  const labelled = (...names: string[]): Issue => ({
+    ...issue(),
+    labels: names.map((name) => ({ name: `milo:${name}` })),
+  });
+  expect(issueCategory(issue("<!-- milo:organisation:2026-W42 -->"))).toBe(
+    "architecture",
+  );
+  // Two retired names for one category are not ambiguous.
+  expect(issueCategory(labelled("cleanup", "modernisation"))).toBe("simplify");
+  expect(issueCategory(labelled("cleanup", "bugs"))).toBeUndefined();
+  expect(
+    parseConfig({
+      agent: { provider: "claude" },
+      repos: [
+        {
+          name: "owner/repo",
+          categories: ["cleanup", "modernisation", "simplify", "organisation"],
+        },
+      ],
+    }).repos[0]?.categories,
+  ).toEqual(["simplify", "architecture"]);
+});
 
 function issue(body = "", state = "open"): Issue {
   return {
@@ -97,7 +122,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Pat
     );
     const repo: Repo = {
       name: "owner/repo",
-      categories: ["security", "cleanup"],
+      categories: ["security", "simplify"],
       autoReady: ["security"],
       setup: [],
       checks: [{ command: ["true"] }],
@@ -115,7 +140,9 @@ await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Pat
     expect(ticket.title).toBe("Patch hono");
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
-    expect(labels.get("milo:cleanup")).toBe(`Milo scanned ${periodKey("day")}`);
+    expect(labels.get("milo:simplify")).toBe(
+      `Milo scanned ${periodKey("day")}`,
+    );
     // Repeat runs in the same period, and categories with an open ticket, call no agent.
     const count = (await Bun.file(calls).text()).length;
     await runner.plan(repo, true, "day");

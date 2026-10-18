@@ -74,6 +74,7 @@ test("commands dispatch to the runner with parsed options", async () => {
     ],
   });
   for (const [args, expected] of [
+    // Retired category names map to their replacements.
     [
       ["plan", "--category", "cleanup"],
       {
@@ -81,7 +82,7 @@ test("commands dispatch to the runner with parsed options", async () => {
           [
             expect.objectContaining({
               name: "owner/a",
-              categories: ["cleanup"],
+              categories: ["simplify"],
             }),
             false,
             "week",
@@ -109,7 +110,7 @@ test("commands dispatch to the runner with parsed options", async () => {
     ],
     [
       ["work", "--repo", "owner/a", "12", "--category", "cleanup"],
-      { work: [[a, 12, "cleanup"]] },
+      { work: [[a, 12, "simplify"]] },
     ],
     [["review", "--repo", "owner/a", "7"], { review: [[a, 7, false]] }],
     [["revise", "--repo", "owner/a", "7"], { review: [[a, 7, true]] }],
