@@ -111,7 +111,9 @@ With a personal token, Milo's issues and PRs show as you, so you can't approve i
 
 Milo uses the App whenever `MILO_APP_CLIENT_ID` is set and falls back to `MILO_GITHUB_TOKEN` otherwise. Delete the personal token once a run succeeds. After the switch, Milo reviews each open PR once more, because it no longer recognises reviews it posted under the old identity.
 
-An App token covers repos under the calling repo's owner, so targets under another owner still need `MILO_GITHUB_TOKEN`. It also lasts one hour: a run that goes longer loses GitHub access partway, and the next run picks up the remaining scans. A ticket that takes over an hour to work is retried rather than blocked, so raise `agent.timeoutSeconds` with care.
+To use one App across several accounts you own, make it public (App settings → Advanced) and install it on each. Never give its private key to anyone else: whoever holds it can act as the App on every account that installed it, including yours. Other people should register their own App with the link above.
+
+An App token covers repos under the calling repo's owner, so a config that targets repos under another owner still needs `MILO_GITHUB_TOKEN`. It also lasts one hour: a run that goes longer loses GitHub access partway, and the next run picks up the remaining scans. A ticket that takes over an hour to work is retried rather than blocked, so raise `agent.timeoutSeconds` with care.
 
 ## Host and distribute
 
