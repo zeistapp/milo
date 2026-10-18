@@ -105,8 +105,30 @@ export class GitHub implements GitHubClient {
     await this.api(`issues/${number}/comments`, "POST", { body });
   }
   async viewer(): Promise<string> {
-    return parse(User, JSON.parse(await command(["gh", "api", "user"]))).login;
+    return (
+      appLogin() ??
+      parse(User, JSON.parse(await command(["gh", "api", "user"]))).login
+    );
   }
+}
+// An App installation token can't read GET /user, so the workflow passes the App's slug.
+const appLogin = () =>
+  process.env.MILO_APP_SLUG ? `${process.env.MILO_APP_SLUG}[bot]` : undefined;
+// Commits show as the App's bot when Milo runs as an App, as github-actions[bot] otherwise.
+export async function author(): Promise<[name: string, email: string]> {
+  const login = appLogin();
+  if (!login)
+    return [
+      "github-actions[bot]",
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    ];
+  const { id } = parse(
+    z.object({ id: z.number() }),
+    JSON.parse(
+      await command(["gh", "api", `users/${encodeURIComponent(login)}`]),
+    ),
+  );
+  return [login, `${id}+${login}@users.noreply.github.com`];
 }
 // Harness rules come last so shared guidance cannot loosen them.
 const policy = `${guidelines}
@@ -319,9 +341,10 @@ async function steps(commands: Step[], root: string): Promise<void> {
 }
 export async function clone(repo: Repo, root: string): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
+  const [name, email] = await author();
   for (const [key, value] of [
-    ["user.name", "github-actions[bot]"],
-    ["user.email", "41898282+github-actions[bot]@users.noreply.github.com"],
+    ["user.name", name],
+    ["user.email", email],
     ["core.hooksPath", "/dev/null"],
     ["credential.helper", "!gh auth git-credential"],
   ] as const) {

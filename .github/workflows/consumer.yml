@@ -8,6 +8,8 @@ on:
     secrets:
       MILO_GITHUB_TOKEN:
         required: false
+      MILO_APP_PRIVATE_KEY:
+        required: false
       ANTHROPIC_API_KEY:
         required: false
       OPENAI_API_KEY:
@@ -19,6 +21,7 @@ jobs:
     uses: zeistapp/milo/.github/workflows/maintenance.yml@main
     secrets:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     # Every run works the oldest approved ticket, then scans each category not yet scanned today.
@@ -32,6 +35,7 @@ jobs:
     uses: zeistapp/milo/.github/workflows/maintenance.yml@main
     secrets:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
+      MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
