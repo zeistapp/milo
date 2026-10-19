@@ -109,7 +109,7 @@ With a personal token, Milo's issues and PRs show as you, so you can't approve i
 4. In each repo's `maintenance` environment, add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY` (the whole `.pem` file).
 5. Add `MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}` to the `secrets:` block of each repo's `milo.yml`.
 
-Milo uses the App whenever `MILO_APP_CLIENT_ID` is set and falls back to `MILO_GITHUB_TOKEN` otherwise. Delete the personal token once a run succeeds. After the switch, Milo reviews each open PR once more, because it no longer recognises reviews it posted under the old identity.
+Milo uses the App whenever `MILO_APP_CLIENT_ID` is set. Otherwise it uses a personal token in secret `MILO_GITHUB_TOKEN`, which `milo.yml` must pass with `MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}`; Milo then acts as you. Delete the personal token once a run succeeds. After the switch, Milo reviews each open PR once more, because it no longer recognises reviews it posted under the old identity.
 
 The link registers a public App, so you can install it on every account you own. Anyone else can install it too, but that gives them nothing. Never give its private key to anyone else: whoever holds it can act as the App on every account that installed it, including yours. Other people should register their own App with the link above.
 

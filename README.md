@@ -33,7 +33,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 }
 ```
 
-2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo. To give Milo its own bot identity instead, [run it as a GitHub App](docs/usage.md#run-milo-as-a-github-app).
+2. Create a `maintenance` GitHub environment restricted to your default branch. Add secret `OPENAI_API_KEY` and variable `CODEX_VERSION` with an exact tested Codex CLI version. Then give Milo GitHub access through a [GitHub App](docs/usage.md#run-milo-as-a-github-app): add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY`. Milo then works as its own bot, so you can approve its PRs and no token expires.
 
 3. Add `.github/workflows/milo.yml`. This one file stays the same forever: Milo's schedule, task list and pinned actions come from `zeistapp/milo@main`.
 
@@ -50,7 +50,6 @@ jobs:
     uses: zeistapp/milo/.github/workflows/consumer.yml@main
     # Named, because GitHub only inherits secrets within one owner. Keep them in the maintenance environment.
     secrets:
-      MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
       MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -65,7 +64,7 @@ Limit scans with `categories` in your config. The retired names `cleanup` and `m
 Older setups copied one workflow per task, so schedule changes, new tasks and action pins never reached them. Switch once and you won't need to edit workflows again.
 
 1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
-2. Add the `milo.yml` from step 3 above.
+2. Add the `milo.yml` from step 3 above. If you still use a personal token, add `MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}` to its `secrets:` block, or [switch to the GitHub App](docs/usage.md#run-milo-as-a-github-app).
 3. Keep your `maintenance` environment, secrets and variables as they are. The `secrets:` block in `milo.yml` is required when your repo has a different owner from `zeistapp`: without it GitHub passes empty secrets.
 4. If you used `categories` to limit tasks, keep it. Otherwise Milo scans all six daily.
 5. Optional: let Milo merge minor dependency PRs by adding `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]` to your repo entry. See [automatic merging](docs/usage.md#automatic-merging) for what that needs.
