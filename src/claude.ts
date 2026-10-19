@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import type { Argv } from "./config.ts";
-import { command } from "./process.ts";
+import { command, sandboxEnv, temporary } from "./process.ts";
 
 // Required CLI floor for restricted mode and fail-closed shell sandbox settings.
 export const minimumClaudeVersion = "2.1.296";
@@ -22,6 +22,7 @@ const Result = z.object({
 
 export function claudeCommand(
   root: string,
+  home: string,
   readOnly: boolean,
   model?: string,
 ): Argv {
@@ -46,6 +47,7 @@ export function claudeCommand(
         ].map((name) => ({ name, mode: "deny" })),
       },
       filesystem: {
+        allowWrite: [home],
         denyWrite: readOnly
           ? [root]
           : [join(root, ".git"), join(root, ".github"), join(root, ".milo")],
@@ -101,11 +103,17 @@ export async function runClaude(
   const match = /^\d+\.\d+\.\d+\b/.exec(version);
   if (!match || Bun.semver.order(match[0], minimumClaudeVersion) < 0)
     throw new Error(`Claude Code ${minimumClaudeVersion}+ is required`);
-  const stdout = await command(claudeCommand(root, readOnly, model), {
-    ...options,
-    input,
-    // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
-    env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1" },
+  // Tools such as Wrangler write through XDG paths, which GitHub's runners point at the
+  // read-only real home. HOME stays: Claude reads its config through it, and denyRead's ~
+  // paths must keep meaning the real home.
+  const stdout = await temporary("milo-claude-", (home) => {
+    const { HOME: _, ...paths } = sandboxEnv(home);
+    return command(claudeCommand(root, home, readOnly, model), {
+      ...options,
+      input,
+      // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
+      env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1", ...paths },
+    });
   });
   let json: unknown;
   try {
