@@ -107,9 +107,7 @@ const timeout = "agent.timeoutSeconds must be an integer between 1 and 3600";
 const Agent = z
   .object({
     provider: z
-      .enum(["codex", "claude"], {
-        error: "agent.provider must be codex or claude",
-      })
+      .enum(["claude"], { error: "agent.provider must be claude" })
       .optional(),
     model: z
       .string()

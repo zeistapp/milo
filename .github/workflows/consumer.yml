@@ -12,8 +12,6 @@ on:
         required: false
       ANTHROPIC_API_KEY:
         required: false
-      OPENAI_API_KEY:
-        required: false
 permissions:
   contents: read
 jobs:
@@ -23,7 +21,6 @@ jobs:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
       MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     # Every run works the oldest approved ticket, then scans each category not yet scanned today.
     # CEILING: one job runs the ticket and every due scan in turn, so a slow day can hit the job timeout;
     # unfinished scans resume on the next run. Split scans into a matrix if that happens often.
@@ -37,7 +34,6 @@ jobs:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
       MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     with:
       action: reviews
       config: ${{ inputs.config }}

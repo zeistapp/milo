@@ -119,12 +119,9 @@ test("one consumer workflow works approved tickets and runs daily scans on every
     };
   };
   const forwarded = Object.fromEntries(
-    [
-      "MILO_GITHUB_TOKEN",
-      "MILO_APP_PRIVATE_KEY",
-      "ANTHROPIC_API_KEY",
-      "OPENAI_API_KEY",
-    ].map((name) => [name, `\${{ secrets.${name} }}`]),
+    ["MILO_GITHUB_TOKEN", "MILO_APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"].map(
+      (name) => [name, `\${{ secrets.${name} }}`],
+    ),
   );
   // No category, so any approved ticket qualifies; scans dedupe per UTC day.
   expect(consumer.jobs.tasks.with).toEqual({
