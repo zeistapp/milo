@@ -769,6 +769,113 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
 });
 
+test("a failed or empty review attempt does not block later PRs", async () => {
+  const repo: Repo = { name: "owner/repo" };
+  const pr = (number: number, sha: string): PullRequest => ({
+    number,
+    state: "open",
+    body: "",
+    html_url: `https://example.test/pr/${number}`,
+    head: {
+      ref: `milo/issue-${number}`,
+      sha,
+      repo: { full_name: "owner/repo" },
+    },
+    base: { ref: "main", sha: "base" },
+  });
+  let open = [pr(34, "a"), pr(35, "b")];
+  const request = (id: number, sha: string): Review => ({
+    id,
+    state: "CHANGES_REQUESTED",
+    commit_id: sha,
+    user: { login: "owner" },
+    body: "",
+  });
+  let reviews = [request(1, "a")];
+  const comments: Record<number, { body: string; user: { login: string } }[]> =
+    { 34: [], 35: [] };
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string): Promise<T> {
+      if (endpoint === "collaborators/owner/permission")
+        return { permission: "write" } as T;
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      const responses: Record<string, unknown[]> = {
+        "pulls?state=open": open,
+        "pulls/34/reviews": reviews,
+        "pulls/35/reviews": [],
+        "issues/34/comments": comments[34] ?? [],
+        "issues/35/comments": comments[35] ?? [],
+      };
+      return (responses[endpoint] ?? []) as T[];
+    },
+    async comment(number, body) {
+      comments[number]?.push({ body, user: { login: "milo" } });
+    },
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+  );
+  const calls: [number, boolean][] = [];
+  let outcome: () => Promise<boolean> = async () => false;
+  const review = spyOn(runner, "review").mockImplementation(
+    async (_repo, number, revise = false) => {
+      calls.push([number, revise]);
+      return outcome();
+    },
+  );
+  try {
+    // An empty revision is attempted once, then #34 falls through to a plain review.
+    await runner.runReviews(repo);
+    await runner.runReviews(repo);
+    expect(calls).toEqual([
+      [34, true],
+      [34, false],
+    ]);
+    // A forged marker from another account does not suppress an attempt.
+    comments[35]?.push({
+      body: "<!-- milo:failed:b: -->",
+      user: { login: "stranger" },
+    });
+    await runner.runReviews(repo);
+    expect(calls.at(-1)).toEqual([35, false]);
+    await runner.runReviews(repo);
+    expect(calls).toHaveLength(3);
+    // A new change request triggers another revision.
+    reviews = [request(1, "a"), request(2, "a")];
+    calls.length = 0;
+    await runner.runReviews(repo);
+    expect(calls).toEqual([[34, true]]);
+    // A throwing plain review is recorded too; a new commit retries it.
+    reviews = [];
+    open = [pr(34, "c"), pr(35, "b")];
+    comments[35] = [];
+    outcome = async () => {
+      throw new Error("PR changed during review; retry");
+    };
+    calls.length = 0;
+    await expect(runner.runReviews(repo)).rejects.toThrow("PR changed");
+    await expect(runner.runReviews(repo)).rejects.toThrow("PR changed");
+    await runner.runReviews(repo);
+    open = [pr(34, "d"), pr(35, "b")];
+    outcome = async () => true;
+    await runner.runReviews(repo);
+    expect(calls).toEqual([
+      [34, false],
+      [35, false],
+      [34, false],
+    ]);
+    expect(comments[34]?.at(-1)?.body).toStartWith("<!-- milo:failed:c: -->");
+  } finally {
+    review.mockRestore();
+  }
+});
+
 test("tasks cannot change agent instruction or CI action files", () =>
   temporary("milo-protected-", async (root) => {
     await command(["git", "init", "--quiet"], { cwd: root });

@@ -148,6 +148,9 @@ const labels = {
 const branchPattern = /^milo\/issue-[1-9][0-9]*$/;
 const reviewMarker = (sha: string) => `<!-- milo:review:${sha} -->`;
 const mergeMarker = "<!-- milo:merge -->";
+// Records that a scheduled review or revision left nothing on this head for these change requests.
+const failedMarker = (sha: string, requests: Review[]) =>
+  `<!-- milo:failed:${sha}:${requests.map((review) => review.id).join(",")} -->`;
 function week(date: Date): string {
   const day = new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
@@ -719,20 +722,18 @@ export class Runner {
     }
     return requests;
   }
-  private async reviewed(
+  private async botComments(
     gh: GitHubClient,
     pr: PullRequest,
-  ): Promise<string | undefined> {
+  ): Promise<string[]> {
     const viewer = await gh.viewer();
     // Markers lead the comment, so agent report text cannot forge them.
     return parse(
       z.array(Comment),
       await gh.pages(`issues/${pr.number}/comments`),
-    ).find(
-      (comment) =>
-        comment.user.login === viewer &&
-        comment.body.startsWith(reviewMarker(pr.head.sha)),
-    )?.body;
+    )
+      .filter((comment) => comment.user.login === viewer)
+      .map((comment) => comment.body);
   }
   private async ticket(gh: GitHubClient, pr: PullRequest): Promise<Issue> {
     return parse(
@@ -822,20 +823,26 @@ export class Runner {
       );
     }
   }
-  async review(repo: Repo, number: number, revise = false): Promise<void> {
+  // Resolves true once the current head has an automated review or a pushed revision.
+  async review(repo: Repo, number: number, revise = false): Promise<boolean> {
     const gh = this.github(repo);
     const pr = parse(PullRequest, await gh.api(`pulls/${number}`));
     validatePR(pr, repo);
-    if (!revise && (await this.reviewed(gh, pr))) {
+    if (
+      !revise &&
+      (await this.botComments(gh, pr)).some((body) =>
+        body.startsWith(reviewMarker(pr.head.sha)),
+      )
+    ) {
       console.log("This commit already has an automated review");
-      return;
+      return true;
     }
     const requests = revise ? await this.requests(gh, number, pr.head.sha) : [];
     if (revise && !requests.length) {
       console.log("No current changes requested by a repository writer");
-      return;
+      return false;
     }
-    await temporary("milo-review-", async (folder) => {
+    return temporary("milo-review-", async (folder) => {
       const root = join(folder, "repo");
       await this.cloneRepo(repo, root);
       const config = await gitConfig(root);
@@ -898,7 +905,7 @@ export class Runner {
           number,
           `${marker}\n\nAutomated review (advisory):\n\n${report}${note}`,
         );
-        return;
+        return true;
       }
       let project = await this.prepare(repo, root);
       const ids = new Set(requests.map((review) => review.id));
@@ -923,7 +930,7 @@ export class Runner {
       );
       if (!(await changes(root))) {
         console.log("No revision produced; the PR still needs human attention");
-        return;
+        return false;
       }
       const current = parse(PullRequest, await gh.api(`pulls/${number}`));
       validatePR(current, repo);
@@ -947,7 +954,30 @@ export class Runner {
         number,
         `Review requests addressed.\n\n${report}${this.checkReport(project)}`,
       );
+      return true;
     });
+  }
+  // Marks a scheduled attempt that leaves nothing on the head, so runReviews moves past it until the head or requests change.
+  private async attempt(
+    gh: GitHubClient,
+    pr: PullRequest,
+    requests: Review[],
+    run: () => Promise<boolean>,
+  ): Promise<void> {
+    const fail = () =>
+      gh.comment(
+        pr.number,
+        `${failedMarker(pr.head.sha, requests)}\n\nMilo could not ${requests.length ? "revise" : "review"} this commit; see the workflow log. ` +
+          "It retries after a new commit or change request.",
+      );
+    let done: boolean;
+    try {
+      done = await run();
+    } catch (error) {
+      await fail();
+      throw error;
+    }
+    if (!done) await fail();
   }
   async runTasks(
     repo: Repo,
@@ -994,17 +1024,28 @@ export class Runner {
       } catch {
         continue;
       }
-      if ((await this.requests(gh, pr.number, pr.head.sha)).length) {
-        await this.review(repo, pr.number, true);
+      const requests = await this.requests(gh, pr.number, pr.head.sha);
+      const comments = await this.botComments(gh, pr);
+      const failed = (requests: Review[]) =>
+        comments.some((body) =>
+          body.startsWith(failedMarker(pr.head.sha, requests)),
+        );
+      if (requests.length && !failed(requests)) {
+        await this.attempt(gh, pr, requests, () =>
+          this.review(repo, pr.number, true),
+        );
         break;
       }
-      const reviewed = await this.reviewed(gh, pr);
+      const reviewed = comments.find((body) =>
+        body.startsWith(reviewMarker(pr.head.sha)),
+      );
       if (reviewed) {
         if (reviewed.startsWith(reviewMarker(pr.head.sha) + mergeMarker))
           await this.merge(gh, repo, pr);
         continue;
       }
-      await this.review(repo, pr.number);
+      if (failed([])) continue;
+      await this.attempt(gh, pr, [], () => this.review(repo, pr.number));
       break;
     }
   }
