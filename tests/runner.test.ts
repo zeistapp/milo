@@ -61,9 +61,11 @@ test("retired categories map to their replacements in tickets and config", () =>
     ...issue(),
     labels: names.map((name) => ({ name: `milo:${name}` })),
   });
-  expect(issueCategory(issue("<!-- milo:organisation:2026-W42 -->"))).toBe(
-    "architecture",
-  );
+  expect(issueCategory(labelled("organisation"))).toBe("architecture");
+  // Authors can edit the body, so a body marker alone grants no category.
+  expect(
+    issueCategory(issue("<!-- milo:organisation:2026-W42 -->")),
+  ).toBeUndefined();
   // Two retired names for one category are not ambiguous.
   expect(issueCategory(labelled("cleanup", "modernisation"))).toBe("simplify");
   expect(issueCategory(labelled("cleanup", "bugs"))).toBeUndefined();
@@ -180,8 +182,15 @@ await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Pat
       `Milo scanned ${periodKey("day")}`,
     );
     // Repeat runs in the same period, and categories with an open ticket, call no agent.
-    const count = (await Bun.file(calls).text()).length;
+    let count = (await Bun.file(calls).text()).length;
     await runner.plan(repo, true, "day");
+    expect((await Bun.file(calls).text()).length).toBe(count);
+    // Anyone can file an issue with a body marker, so it does not skip a scan.
+    labels.set("milo:security", null);
+    open.push(issue("<!-- milo:security:x -->"));
+    await runner.plan(repo, true, "day");
+    expect((await Bun.file(calls).text()).length).toBeGreaterThan(count);
+    count = (await Bun.file(calls).text()).length;
     labels.set("milo:security", null);
     open.push({ ...issue(), labels: [{ name: "milo:security" }] });
     await runner.plan(repo, true, "day");
@@ -464,7 +473,10 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
           if (endpoint === "issues/15" && method === "PATCH")
             closed.push(payload);
           else if (endpoint === "issues/12")
-            result = issue("<!-- milo:dependencies:key -->");
+            result = {
+              ...issue("<!-- milo:dependencies:key -->"),
+              labels: [...issue().labels, { name: "milo:dependencies" }],
+            };
           else if (endpoint === "issues/13")
             result = { ...issue(), number: 13 };
           else if (endpoint === "issues/14")
@@ -663,6 +675,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   let open = [pr];
   let reviews: Review[] = [];
   let comment = "<!-- milo:review:abc --><!-- milo:merge -->\n\nreport";
+  let ticket = { ...issue(), labels: [{ name: "milo:dependencies" }] };
   const writes: string[] = [];
   const gh: GitHubClient = {
     async api<T>(endpoint: string, method = "GET"): Promise<T> {
@@ -670,7 +683,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
       if (conflict && endpoint === "pulls/34/update-branch")
         throw new Error("gh api: 422 merge conflict");
       const responses: Record<string, unknown> = {
-        "issues/12": { ...issue(), labels: [{ name: "milo:dependencies" }] },
+        "issues/12": ticket,
         "commits/abc/check-runs?per_page=100": { check_runs: runs },
         "commits/abc/status": status,
         "compare/main...abc": { behind_by: behind },
@@ -716,6 +729,12 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   reviews = [];
   await runner.runReviews({ ...repo, autoMerge: [] });
   expect(writes).toHaveLength(1);
+  // The author can edit the body, so a body marker alone does not enable auto-merge.
+  const labelled = ticket;
+  ticket = issue("<!-- milo:dependencies:key -->");
+  await runner.runReviews(repo);
+  expect(writes).toHaveLength(1);
+  ticket = labelled;
   comment = "<!-- milo:review:abc -->\n\n<!-- milo:merge -->";
   await runner.runReviews(repo);
   expect(writes).toHaveLength(1);

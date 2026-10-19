@@ -172,13 +172,12 @@ export function finding(
   if (!title) throw new Error("Scan report has neither a title nor a verdict");
   return { title: title.trim().slice(0, 200), body: rest.join("\n").trim() };
 }
+// Labels only: issue authors can edit the body, but labelling needs triage access.
 export function issueCategory(issue: Issue): Category | undefined {
   const matches = new Set(
     [...categoryNames, ...Object.keys(retiredCategories)]
-      .filter(
-        (name) =>
-          (issue.body ?? "").includes(`<!-- milo:${name}:`) ||
-          issue.labels.some((label) => label.name === `milo:${name}`),
+      .filter((name) =>
+        issue.labels.some((label) => label.name === `milo:${name}`),
       )
       .map((name) => parse(Category, name)),
   );
