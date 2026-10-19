@@ -25,6 +25,8 @@ test("provider configuration validates model selection and preserves custom agen
       model,
     })),
     { command: ["cli", "{output}"], model: "model" },
+    { command: ["cli", "{output}"], scanModel: "model" },
+    { provider: "claude", scanModel: "--help" },
   ])
     expect(() => parseConfig({ agent, repos })).toThrow();
   expect(
@@ -131,6 +133,10 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       ).toEqual([home]);
       expect(existsSync(home)).toBeFalse();
       expect(invocation.args.slice(-2)).toEqual(["--model", "exact-model"]);
+      await runAgent(config("claude"), root, "Scan this", true, "scan-model");
+      expect(
+        (await Bun.file(join(root, "invocation.json")).json()).args.slice(-2),
+      ).toEqual(["--model", "scan-model"]);
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
       );

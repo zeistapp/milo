@@ -383,6 +383,7 @@ export async function runAgent(
   root: string,
   prompt: string,
   readOnly = false,
+  model = config.agent.model,
 ): Promise<string> {
   return temporary("milo-report-", async (folder) => {
     const output = join(folder, "report.txt");
@@ -394,7 +395,7 @@ export async function runAgent(
           root,
           input,
           readOnly,
-          config.agent.model,
+          model,
           config.agent.timeoutSeconds,
         ),
       );
@@ -518,6 +519,7 @@ export class Runner {
           "Otherwise make the first line exactly `Title: <short imperative summary>`, then give the evidence, the proposed change and acceptance criteria.\n" +
           projectContext(await inspectProject(root, repo)),
         true,
+        this.config.agent.scanModel,
       );
       await assertGitIntact(root, config);
       if (await git(root, "status", "--porcelain"))

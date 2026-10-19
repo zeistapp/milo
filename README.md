@@ -6,7 +6,7 @@ It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, Rea
 
 ## What Milo does
 
-Every two hours Milo works the oldest approved ticket and reviews open Milo PRs. Once a day it scans each of six areas. Each scan stays in its own area:
+Every six hours Milo works the oldest approved ticket and reviews open Milo PRs. Once a day it scans each of six areas. Each scan stays in its own area:
 
 | Task | What it does |
 | --- | --- |
@@ -41,7 +41,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 name: Milo
 on:
   schedule:
-    - cron: '23 */2 * * *'
+    - cron: '23 */6 * * *'
   workflow_dispatch:
 permissions:
   contents: read

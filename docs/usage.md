@@ -73,16 +73,16 @@ The local `check` command runs setup and validation without GitHub writes or age
 
 ## Agents, models and credentials
 
-Set `agent.provider` to `claude` and optionally choose `agent.model`:
+Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.scanModel`:
 
 ```json
 {
-  "agent": { "provider": "claude", "model": "MODEL_ID", "timeoutSeconds": 1800 },
+  "agent": { "provider": "claude", "model": "MODEL_ID", "scanModel": "SCAN_MODEL_ID", "timeoutSeconds": 1800 },
   "repos": [{ "name": "owner/product", "autoReady": [] }]
 }
 ```
 
-Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
+Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. `scanModel` applies only to read-only scans, which run once per category, so a cheaper model there cuts most of the cost; omit it to scan with `model`. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
 
 Add the `ANTHROPIC_API_KEY` secret to the `maintenance` environment. The action's `claude-version` input takes an exact version, 2.1.296+; the shared workflow defaults to Milo's tested version, and an optional `CLAUDE_VERSION` variable overrides it. Configs with a custom `agent.command` install nothing. CLI version and model version are separate choices. Milo's Claude adapter uses bare mode and requires API authentication rather than a subscription login.
 
@@ -112,15 +112,15 @@ An App token covers repos under the calling repo's owner, so a config that targe
 
 ## Host and distribute
 
-Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY`. Milo acts as the `milo-maintainer` GitHub App through `MILO_APP_CLIENT_ID` and `MILO_APP_PRIVATE_KEY`; see [Run Milo as a GitHub App](#run-milo-as-a-github-app). Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan every category, then add `milo:ready` to the findings you want worked. Scheduled runners scan again at their configured intervals; `autoReady: []` requires approval before agent edits.
+Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`) and scans with Claude Sonnet 5.5 (`claude-sonnet-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY`. Milo acts as the `milo-maintainer` GitHub App through `MILO_APP_CLIENT_ID` and `MILO_APP_PRIVATE_KEY`; see [Run Milo as a GitHub App](#run-milo-as-a-github-app). Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan every category, then add `milo:ready` to the findings you want worked. Scheduled runners scan again at their configured intervals; `autoReady: []` requires approval before agent edits.
 
 Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `ANTHROPIC_API_KEY` as secrets; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. Or [run Milo as a GitHub App](#run-milo-as-a-github-app). The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
-Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every two hours and calls `consumer.yml`. That workflow calls the shared `maintenance.yml` once for tasks and once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Milo works any approved custom ticket. Add a `milo:<category>` label if that category is in `autoMerge` and you want Milo to merge it.
+Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every six hours and calls `consumer.yml`. That workflow calls the shared `maintenance.yml` once for tasks and once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Milo works any approved custom ticket. Add a `milo:<category>` label if that category is in `autoMerge` and you want Milo to merge it.
 
 | Runner | Interval |
 | --- | --- |
-| Approved tickets, one per run | Every run (two hours) |
+| Approved tickets, one per run | Every run (six hours) |
 | PR reviews, revisions and merges | Every run |
 | Scans of every category | Once per UTC day |
 
