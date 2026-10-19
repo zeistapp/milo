@@ -338,6 +338,7 @@ async function steps(commands: Step[], root: string): Promise<void> {
       trusted: false,
       timeoutSeconds: 900,
       env: sandboxEnv(home),
+      label: `${step.cwd ?? "."}: ${step.command.join(" ")}`,
     });
   }
 }
