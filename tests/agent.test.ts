@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { chmod } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
-import { temporary } from "../src/process.ts";
+import { sandboxEnv, temporary } from "../src/process.ts";
 import { runAgent } from "../src/runner.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
@@ -35,7 +36,7 @@ test("provider configuration validates model selection and preserves custom agen
 });
 
 test("Claude reviews get a sandboxed shell but no writes; edits require a shell sandbox", () => {
-  const readonly = claudeCommand("/repo", true);
+  const readonly = claudeCommand("/repo", "/scratch", true);
   expect(readonly[readonly.indexOf("--tools") + 1]).toBe(
     "Read,Glob,Grep,WebFetch,WebSearch,Bash",
   );
@@ -44,7 +45,8 @@ test("Claude reviews get a sandboxed shell but no writes; edits require a shell 
   );
   expect(readonlySettings.sandbox.enabled).toBe(true);
   expect(readonlySettings.sandbox.filesystem.denyWrite).toEqual(["/repo"]);
-  const editing = claudeCommand("/repo", false, "exact-model");
+  expect(readonlySettings.sandbox.filesystem.allowWrite).toEqual(["/scratch"]);
+  const editing = claudeCommand("/repo", "/scratch", false, "exact-model");
   expect(editing.slice(-2)).toEqual(["--model", "exact-model"]);
   expect(editing[editing.indexOf("--allowedTools") + 1]).toContain("Bash");
   expect(readonly[readonly.indexOf("--allowedTools") + 1]).not.toContain(
@@ -76,7 +78,7 @@ test("provider subprocesses forward prompts and models, save reports and reject 
 const args = Bun.argv.slice(2);
 if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '${minimumClaudeVersion} (Claude Code)'); process.exit(0); }
 const input = await Bun.stdin.text();
-await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY,claudeMd:process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD}));
+await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY,claudeMd:process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD,home:process.env.HOME,paths:['TMPDIR','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','XDG_STATE_HOME'].map((key)=>process.env[key]),settings:args[args.indexOf('--settings')+1]}));
 if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Codex report');
 else if (process.env.MILO_TEST_RESULT === 'exit') process.exit(1);
 else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Claude report'}));
@@ -120,6 +122,16 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");
       expect(invocation.claudeMd).toBe("1");
+      // Compare paths, not prefixes: Milo's own step sandbox puts TMPDIR inside HOME.
+      const home = dirname(invocation.paths[1]);
+      const { HOME, ...paths } = sandboxEnv(home);
+      expect(invocation.paths).toEqual(Object.values(paths));
+      expect(invocation.home).toBe(process.env.HOME);
+      expect([process.env.HOME, root]).not.toContain(home);
+      expect(
+        JSON.parse(invocation.settings).sandbox.filesystem.allowWrite,
+      ).toEqual([home]);
+      expect(existsSync(home)).toBeFalse();
       expect(invocation.args.slice(-2)).toEqual(["--model", "exact-model"]);
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
