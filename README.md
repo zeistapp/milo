@@ -33,7 +33,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 }
 ```
 
-2. Create a `maintenance` GitHub environment restricted to your default branch. Add secrets `OPENAI_API_KEY` and `MILO_GITHUB_TOKEN`, plus variable `CODEX_VERSION` with an exact tested Codex CLI version. The GitHub token needs Contents, Issues and Pull requests write permissions and Metadata read access for the target repo. To give Milo its own bot identity instead, [run it as a GitHub App](docs/usage.md#run-milo-as-a-github-app).
+2. Create a `maintenance` GitHub environment restricted to your default branch. Add secret `OPENAI_API_KEY` and variable `CODEX_VERSION` with an exact tested Codex CLI version. Then give Milo GitHub access through a [GitHub App](docs/usage.md#run-milo-as-a-github-app): add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY`. Milo then works as its own bot, so you can approve its PRs and no token expires. A fine-grained personal token in secret `MILO_GITHUB_TOKEN` also works, with Contents, Issues and Pull requests write and Metadata read access, but Milo then acts as you.
 
 3. Add `.github/workflows/milo.yml`. This one file stays the same forever: Milo's schedule, task list and pinned actions come from `zeistapp/milo@main`.
 
