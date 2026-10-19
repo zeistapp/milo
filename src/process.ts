@@ -13,6 +13,8 @@ export interface CommandOptions {
   keepAgentCredentials?: boolean;
   logFile?: string;
   env?: Record<string, string>;
+  // Names the command in errors when argv[0] is a wrapper such as the sandbox.
+  label?: string;
 }
 export async function command(
   argv: Argv,
@@ -43,6 +45,7 @@ export async function command(
     env.GIT_CONFIG_KEY_0 = "credential.helper";
     env.GIT_CONFIG_VALUE_0 = "";
   }
+  const name = options.label ?? argv[0];
   return new Promise((resolve, reject) => {
     const log = options.logFile
       ? openSync(options.logFile, "w", 0o600)
@@ -76,7 +79,7 @@ export async function command(
     };
     const timer = setTimeout(
       () => {
-        failure = new Error(`Timed out: ${argv[0]}`);
+        failure = new Error(`Timed out: ${name}`);
         kill();
       },
       (options.timeoutSeconds ?? 120) * 1000,
@@ -86,7 +89,7 @@ export async function command(
       writeLog(chunk);
       stdout += chunk;
       if (stdout.length > 16_000_000) {
-        failure = new Error(`${argv[0]} output exceeds 16 MB`);
+        failure = new Error(`${name} output exceeds 16 MB`);
         kill();
       }
     });
@@ -107,7 +110,7 @@ export async function command(
       else if (code !== 0)
         reject(
           new Error(
-            `${argv[0]} failed (exit ${code}); reproduce this configured command locally`,
+            `${name} failed (exit ${code}); reproduce this configured command locally`,
           ),
         );
       else resolve(stdout.trim());

@@ -584,7 +584,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
           },
           13,
         ),
-      ).rejects.toThrow("failed");
+      ).rejects.toThrow(`.: ${process.execPath} -e process.exit(1) failed`);
       expect(await Bun.file(invocations).text()).toBe(calls);
       // An edit during the run stops it before anything is pushed.
       await expect(runner.work(repo, 14)).rejects.toThrow("Ticket changed");
