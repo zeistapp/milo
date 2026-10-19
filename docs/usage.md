@@ -26,7 +26,7 @@ The agent receives dependency declarations and must consult current official doc
 
 ## Run locally
 
-Requires Bun 1.4.3+, Git, GitHub CLI and a configured agent. Edit `milo.config.json` with repos you own. Install and authenticate the agent; the example uses [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
+Requires Bun 1.4.3+, Git, GitHub CLI and a configured agent. Edit `milo.config.json` with repos you own. Install Claude Code 2.1.296+ and set `ANTHROPIC_API_KEY`.
 
 ```sh
 bun install --frozen-lockfile
@@ -47,7 +47,7 @@ bun run milo --config examples/ecosystem.json --category security --period day t
 bun run milo --config examples/ecosystem.json reviews
 ```
 
-The agent reads its prompt from stdin. `agent.command` is an argv array: `{output}` is the final report path and `{sandbox}` is `workspace-write` or `read-only`. Replace it to use another agent or a sandboxed wrapper.
+The agent reads its prompt from stdin. A custom `agent.command` is an argv array: `{output}` is the final report path and `{sandbox}` is `workspace-write` or `read-only`. Use it to run another agent or a sandboxed wrapper.
 
 For unusual scripts, integration services or an aggregate monorepo pipeline, replace discovery with explicit commands in the repo entry:
 
@@ -73,7 +73,7 @@ The local `check` command runs setup and validation without GitHub writes or age
 
 ## Agents, models and credentials
 
-Choose `agent.provider` (`codex` or `claude`) and optionally `agent.model`:
+Set `agent.provider` to `claude` and optionally choose `agent.model`:
 
 ```json
 {
@@ -82,16 +82,11 @@ Choose `agent.provider` (`codex` or `claude`) and optionally `agent.model`:
 }
 ```
 
-Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. See the [Codex command reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) and [Claude command reference](https://code.claude.com/docs/en/cli-reference).
+Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
 
-| Provider | Action installation input | Agent credential |
-| --- | --- | --- |
-| Codex | `codex-version` (exact tested version) | `CODEX_API_KEY` (an OpenAI API key) |
-| Claude Code | `claude-version` (exact version, 2.1.296+); the shared workflow defaults to Milo's tested version | `ANTHROPIC_API_KEY` |
+Add the `ANTHROPIC_API_KEY` secret to the `maintenance` environment. The action's `claude-version` input takes an exact version, 2.1.296+; the shared workflow defaults to Milo's tested version, and an optional `CLAUDE_VERSION` variable overrides it. Configs with a custom `agent.command` install nothing. CLI version and model version are separate choices. Milo's Claude adapter uses bare mode and requires API authentication rather than a subscription login.
 
-The supplied workflows map the `OPENAI_API_KEY` secret to `CODEX_API_KEY`. For Claude, change the config provider and add the `ANTHROPIC_API_KEY` secret; `CLAUDE_VERSION` is optional and overrides Milo's tested default. The shared maintenance workflow reads `agent.provider` from your config, then checks and installs only that agent, so a stray variable for the other provider is ignored. Configs with a custom `agent.command` install nothing. CLI version and model version are separate choices. Local Codex can use its authenticated CLI; Milo's Claude adapter uses bare mode and requires API authentication rather than a subscription login.
-
-Claude receives the prompt through stdin. Milo validates its JSON result and saves the final report through the same checks as Codex. Errors, denied permissions, empty reports and oversized reports stop the task. Scans and reviews expose Read, Glob, Grep, WebFetch, WebSearch and sandboxed Bash, with the whole repository denied for writes, so they can search, read git history and query the npm registry but not edit.
+Claude receives the prompt through stdin. Milo validates its JSON result and saves the final report through the same checks as a custom agent's. Errors, denied permissions, empty reports and oversized reports stop the task. Scans and reviews expose Read, Glob, Grep, WebFetch, WebSearch and sandboxed Bash, with the whole repository denied for writes, so they can search, read git history and query the npm registry but not edit.
 
 Editing tasks add Edit and Write, and the sandbox allows writes outside protected directories. Restricted mode confines file tools to the working directory; bare mode disables automatic project customizations, so Milo passes the repository with `--add-dir` to load its CLAUDE.md files. MCP servers and slash commands are disabled. Tasks cannot change AGENTS.md, CLAUDE.md or `.claude/`. The Bash sandbox must be available, has no unsandboxed fallback, denies credential directories and protected automation directories, and strips provider keys from sandboxed commands. Shell network access is limited to the npm registry; web tools remain available for documentation. Other package registries or tools needing additional shell network access may require a custom adapter. Linux requires bubblewrap and socat. The action installs these on Ubuntu/Debian runners and adds the documented bubblewrap AppArmor profile if required; self-hosted runners need sudo access or a prepared installation. macOS uses its built-in sandbox.
 
@@ -119,7 +114,7 @@ An App token covers repos under the calling repo's owner, so a config that targe
 
 Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY`. Milo acts as the `milo-maintainer` GitHub App through `MILO_APP_CLIENT_ID` and `MILO_APP_PRIVATE_KEY`; see [Run Milo as a GitHub App](#run-milo-as-a-github-app). Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan every category, then add `milo:ready` to the findings you want worked. Scheduled runners scan again at their configured intervals; `autoReady: []` requires approval before agent edits.
 
-Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `OPENAI_API_KEY` as secrets, plus an exact tested `CODEX_VERSION` as an environment variable. For Claude, use `ANTHROPIC_API_KEY` instead and change the config provider; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. Or [run Milo as a GitHub App](#run-milo-as-a-github-app). The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
+Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `ANTHROPIC_API_KEY` as secrets; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. Or [run Milo as a GitHub App](#run-milo-as-a-github-app). The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
 Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every two hours and calls `consumer.yml`. That workflow calls the shared `maintenance.yml` once for tasks and once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Milo works any approved custom ticket. Add a `milo:<category>` label if that category is in `autoMerge` and you want Milo to merge it.
 
@@ -131,7 +126,7 @@ Consumers and Milo itself use the same two-line `milo.yml` caller, which runs ev
 
 The first run of each UTC day scans every category in turn; the category label's description records the scan (`Milo scanned 2026-10-16`), so later runs that day skip it. A missed or late scheduled run just moves the scan to the next run. Milo also skips a category's scan while it has an open ticket, so triage or close findings to keep scans running. Categories a repo excludes through `categories` are skipped. Tasks share one concurrency group and reviews share another. The Manual maintenance workflow supports targeted tasks and individual issue/PR operations. To keep your own cron and periods instead, call `zeistapp/milo/.github/workflows/maintenance.yml@main` from your own workflows with `action`, `category` and `period`; those copies don't receive schedule changes.
 
-Other users can invoke this [composite action](https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action) using `zeistapp/milo@main`, after checking out their config. This automatically follows updates to Milo's main branch. For a dedicated runner, pass `action: task`, `category`, `period`, a pinned `codex-version`, and `GH_TOKEN`/`CODEX_API_KEY` through the step environment. Use `action: reviews` for the review queue. Use `claude-version` and `ANTHROPIC_API_KEY` for the built-in Claude adapter. Omit both installation inputs when supplying an installed custom agent. Linux and macOS are supported; Windows is not supported yet.
+Other users can invoke this [composite action](https://docs.github.com/en/actions/tutorials/create-actions/create-a-composite-action) using `zeistapp/milo@main`, after checking out their config. This automatically follows updates to Milo's main branch. For a dedicated runner, pass `action: task`, `category`, `period`, a pinned `claude-version`, and `GH_TOKEN`/`ANTHROPIC_API_KEY` through the step environment. Use `action: reviews` for the review queue. Omit `claude-version` when supplying an installed custom agent. Linux and macOS are supported; Windows is not supported yet.
 
 Require target-repo CI and human approval through branch rules, dismissing stale approvals after updates. Milo does not install CI or branch rules in other repos. Automated reviews are advisory comments, and Milo merges nothing unless you opt in with `autoMerge`. Start with `autoReady: []`; add categories once you trust their results. A tick runs at most one new task and one review/revision per repo. Set provider spending limits for a hard billing cap. Avoid overlapping local runs; the workflow serialises scheduled runs.
 

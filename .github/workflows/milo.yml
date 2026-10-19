@@ -13,4 +13,3 @@ jobs:
       MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}
       MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

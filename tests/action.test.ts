@@ -113,11 +113,9 @@ test("maintenance preflight installs only the configured provider's agent", () =
         CONFIG: config,
         GITHUB_OUTPUT: output,
         DEFAULT_CLAUDE_VERSION: fallback,
-        CODEX_VERSION: "",
         CLAUDE_VERSION: "",
         MILO_GITHUB_TOKEN: "fake-github-token",
         ANTHROPIC_API_KEY: "",
-        OPENAI_API_KEY: "",
         ...env,
       };
       const previous = Object.fromEntries(
@@ -135,27 +133,16 @@ test("maintenance preflight installs only the configured provider's agent", () =
       }
     };
     const anthropic = { ANTHROPIC_API_KEY: "fake-anthropic-key" };
-    const openai = { OPENAI_API_KEY: "fake-openai-key" };
     expect(await run("claude", anthropic)).toBe(`claude-version=${fallback}`);
     expect(await run("claude", { ...anthropic, CLAUDE_VERSION: "2.2.0" })).toBe(
       "claude-version=2.2.0",
     );
-    // A stray Codex pin no longer satisfies a Claude config.
-    await expect(
-      run("claude", { CODEX_VERSION: "0.162.1", ...openai }),
-    ).rejects.toThrow("failed");
+    await expect(run("claude", {})).rejects.toThrow("failed");
     await expect(
       run("claude", { ...anthropic, MILO_GITHUB_TOKEN: "" }),
     ).rejects.toThrow("failed");
-    await expect(run("codex", openai)).rejects.toThrow("failed");
-    await expect(run("codex", { CODEX_VERSION: "0.162.1" })).rejects.toThrow(
-      "failed",
-    );
+    // A custom agent.command installs nothing, even with a Claude pin set.
     expect(
-      await run("codex", {
-        ...openai,
-        CODEX_VERSION: "0.162.1",
-        CLAUDE_VERSION: "2.1.296",
-      }),
-    ).toBe("codex-version=0.162.1");
+      await run("custom", { ...anthropic, CLAUDE_VERSION: "2.1.296" }),
+    ).toBe("");
   }));

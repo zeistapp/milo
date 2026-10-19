@@ -27,13 +27,13 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 ```json
 {
   "agent": {
-    "provider": "codex"
+    "provider": "claude"
   },
   "repos": [{ "name": "YOUR_OWNER/YOUR_REPO", "autoReady": [] }]
 }
 ```
 
-2. Create a `maintenance` GitHub environment restricted to your default branch. Add secret `OPENAI_API_KEY` and variable `CODEX_VERSION` with an exact tested Codex CLI version. Then give Milo GitHub access through a [GitHub App](docs/usage.md#run-milo-as-a-github-app): add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY`. Milo then works as its own bot, so you can approve its PRs and no token expires.
+2. Create a `maintenance` GitHub environment restricted to your default branch. Add secret `ANTHROPIC_API_KEY`. Then give Milo GitHub access through a [GitHub App](docs/usage.md#run-milo-as-a-github-app): add variable `MILO_APP_CLIENT_ID` and secret `MILO_APP_PRIVATE_KEY`. Milo then works as its own bot, so you can approve its PRs and no token expires.
 
 3. Add `.github/workflows/milo.yml`. This one file stays the same forever: Milo's schedule, task list and pinned actions come from `zeistapp/milo@main`.
 
@@ -52,7 +52,6 @@ jobs:
     secrets:
       MILO_APP_PRIVATE_KEY: ${{ secrets.MILO_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
@@ -72,9 +71,9 @@ Older setups copied one workflow per task, so schedule changes, new tasks and ac
 
 If a run fails, the run summary now shows the reason.
 
-## Agent choice
+## Model
 
-Choose the provider and model in your config:
+Milo runs Claude Code. Choose the model in your config:
 
 ```json
 {
@@ -83,9 +82,9 @@ Choose the provider and model in your config:
 }
 ```
 
-Use `codex` or `claude`. Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. An alias such as `sonnet` follows provider updates; use an exact version ID to pin a release.
+Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release.
 
-For Claude, add an `ANTHROPIC_API_KEY` secret to the `maintenance` environment instead of the OpenAI pair. Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own. Each run installs and checks only the agent your config's `provider` names.
+Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own.
 
 See [local runs, permissions and advanced configuration](docs/usage.md).
 

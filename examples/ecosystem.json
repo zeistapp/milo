@@ -1,6 +1,6 @@
 {
   "agent": {
-    "provider": "codex",
+    "provider": "claude",
     "timeoutSeconds": 1800
   },
   "repos": [

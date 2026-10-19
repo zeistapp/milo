@@ -9,21 +9,19 @@ import { runAgent } from "../src/runner.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
   const repos = [{ name: "owner/repo" }];
-  for (const provider of ["claude", "codex"]) {
-    const config = parseConfig({
-      agent: { provider, model: "exact-model-20261014" },
-      repos,
-    });
-    expect(includeSelfRepo(config, "owner/milo").agent).toEqual(config.agent);
-    expect(
-      parseConfig({ agent: { provider }, repos }).agent.model,
-    ).toBeUndefined();
-  }
+  const config = parseConfig({
+    agent: { provider: "claude", model: "exact-model-20261014" },
+    repos,
+  });
+  expect(includeSelfRepo(config, "owner/milo").agent).toEqual(config.agent);
+  expect(
+    parseConfig({ agent: { provider: "claude" }, repos }).agent.model,
+  ).toBeUndefined();
   for (const agent of [
     { provider: "unknown" },
     { provider: "claude", command: ["cli", "{output}"] },
     ...["", "--help", "model with spaces", 12, null].map((model) => ({
-      provider: "codex",
+      provider: "claude",
       model,
     })),
     { command: ["cli", "{output}"], model: "model" },
@@ -79,11 +77,11 @@ const args = Bun.argv.slice(2);
 if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '${minimumClaudeVersion} (Claude Code)'); process.exit(0); }
 const input = await Bun.stdin.text();
 await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env.GH_TOKEN,anthropic:process.env.ANTHROPIC_API_KEY,claudeMd:process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD,home:process.env.HOME,paths:['TMPDIR','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_DATA_HOME','XDG_STATE_HOME'].map((key)=>process.env[key]),settings:args[args.indexOf('--settings')+1]}));
-if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Codex report');
+if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Custom report');
 else if (process.env.MILO_TEST_RESULT === 'exit') process.exit(1);
 else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Claude report'}));
 `;
-    for (const name of ["claude", "codex"]) {
+    for (const name of ["claude", "agent"]) {
       const path = join(root, name);
       await Bun.write(path, script);
       await chmod(path, 0o700);
@@ -136,12 +134,23 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
       );
-      expect(await runAgent(config("codex"), root, "Edit this")).toBe(
-        "Codex report",
-      );
-      const codex = await Bun.file(join(root, "invocation.json")).json();
-      expect(codex.args).toContain("workspace-write");
-      expect(codex.args).toContain("exact-model");
+      const custom = parseConfig({
+        agent: {
+          command: [
+            join(root, "agent"),
+            "exec",
+            "--sandbox",
+            "{sandbox}",
+            "--output-last-message",
+            "{output}",
+          ],
+        },
+        repos: [{ name: "owner/repo" }],
+      });
+      expect(await runAgent(custom, root, "Edit this")).toBe("Custom report");
+      expect(
+        (await Bun.file(join(root, "invocation.json")).json()).args,
+      ).toContain("workspace-write");
       // The default fake version above is exactly the floor and was accepted.
       const [major = 0, minor = 0, patch = 0] = minimumClaudeVersion
         .split(".")

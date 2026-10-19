@@ -399,16 +399,8 @@ export async function runAgent(
         ),
       );
     } else {
-      const configured: Argv = config.agent.command ?? [
-        "codex",
-        "exec",
-        "--sandbox",
-        "{sandbox}",
-        "--output-last-message",
-        "{output}",
-        ...(config.agent.model ? ["--model", config.agent.model] : []),
-        "-",
-      ];
+      const configured = config.agent.command;
+      if (!configured) throw new Error("Set agent.provider or agent.command");
       const argv = configured.map((part) =>
         part
           .replaceAll("{output}", output)
