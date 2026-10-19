@@ -104,18 +104,22 @@ const Repo = z
   );
 export type Repo = z.infer<typeof Repo>;
 const timeout = "agent.timeoutSeconds must be an integer between 1 and 3600";
+const Model = (field: string) =>
+  z
+    .string()
+    .regex(
+      /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$/,
+      `${field} must be a model ID or alias`,
+    )
+    .optional();
 const Agent = z
   .object({
     provider: z
       .enum(["claude"], { error: "agent.provider must be claude" })
       .optional(),
-    model: z
-      .string()
-      .regex(
-        /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,199}$/,
-        "agent.model must be a model ID or alias",
-      )
-      .optional(),
+    model: Model("agent.model"),
+    // Scans are read-only and run once per category, so a cheaper model often suffices.
+    scanModel: Model("agent.scanModel"),
     command: Argv.optional(),
     timeoutSeconds: z
       .int({ error: timeout })
@@ -133,7 +137,8 @@ const Agent = z
     "agent.command must be an argv array containing {output}",
   )
   .refine(
-    ({ provider, model }) => provider || model === undefined,
+    ({ provider, model, scanModel }) =>
+      provider || (model === undefined && scanModel === undefined),
     "Set model flags in a custom agent.command, or use agent.provider",
   );
 const Config = z.object({
