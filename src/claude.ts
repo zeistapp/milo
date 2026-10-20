@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { z } from "zod";
 import type { Argv } from "./config.ts";
-import { command, sandboxEnv, temporary } from "./process.ts";
+import {
+  agentCredentials,
+  command,
+  sandboxEnv,
+  secretDirs,
+  temporary,
+} from "./process.ts";
 
 // Required CLI floor for restricted mode and fail-closed shell sandbox settings.
 export const minimumClaudeVersion = "2.1.296";
@@ -38,20 +44,14 @@ export function claudeCommand(
       allowUnsandboxedCommands: false,
       excludedCommands: [],
       credentials: {
-        envVars: [
-          "ANTHROPIC_API_KEY",
-          "CODEX_API_KEY",
-          "OPENAI_API_KEY",
-          "AZURE_OPENAI_API_KEY",
-          "CLAUDE_CODE_OAUTH_TOKEN",
-        ].map((name) => ({ name, mode: "deny" })),
+        envVars: agentCredentials.map((name) => ({ name, mode: "deny" })),
       },
       filesystem: {
         allowWrite: [home],
         denyWrite: readOnly
           ? [root]
           : [join(root, ".git"), join(root, ".github"), join(root, ".milo")],
-        denyRead: ["~/.ssh", "~/.aws", "~/.config/gh", "~/.codex", "~/.claude"],
+        denyRead: secretDirs.map((dir) => `~/${dir}`),
       },
       network: { allowedDomains: ["registry.npmjs.org"] },
     },

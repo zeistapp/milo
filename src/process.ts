@@ -5,6 +5,22 @@ import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import type { Argv } from "./config.ts";
 
+// Both sandboxes (untrusted steps here, the agent's shell in claude.ts) hide these.
+export const agentCredentials = [
+  "CODEX_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "AZURE_OPENAI_API_KEY",
+] as const;
+// Relative to the home directory.
+export const secretDirs = [
+  ".ssh",
+  ".aws",
+  ".config/gh",
+  ".codex",
+  ".claude",
+] as const;
 export interface CommandOptions {
   cwd?: string;
   input?: string;
@@ -31,14 +47,7 @@ export async function command(
     ])
       delete env[key];
     if (!options.keepAgentCredentials) {
-      for (const key of [
-        "CODEX_API_KEY",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "CLAUDE_CODE_OAUTH_TOKEN",
-        "AZURE_OPENAI_API_KEY",
-      ])
-        delete env[key];
+      for (const key of agentCredentials) delete env[key];
     }
     env.GIT_TERMINAL_PROMPT = "0";
     env.GIT_CONFIG_COUNT = "1";
@@ -129,9 +138,7 @@ export function confine(
   home: string,
   cwd: string,
 ): Argv {
-  const secrets = [".ssh", ".aws", ".config/gh", ".codex", ".claude"].map(
-    (dir) => join(homedir(), dir),
-  );
+  const secrets = secretDirs.map((dir) => join(homedir(), dir));
   if (process.platform === "linux")
     return [
       "bwrap",
