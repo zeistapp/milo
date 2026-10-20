@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { type Argv, parse, type Repo, type Step } from "./config.ts";
 import { inside } from "./process.ts";
@@ -295,6 +295,64 @@ export async function inspectProject(
   }
   for (const step of [...setup, ...checks]) await inside(root, step.cwd);
   return { packageManager, packages, setup, checks, warnings };
+}
+
+// Version each package directory actually loads per direct dependency, found the way Node resolves it.
+export type Installed = Map<string, Map<string, string>>;
+export async function installedVersions(
+  root: string,
+  packages: Pick<PackageProfile, "directory" | "dependencies">[],
+): Promise<Installed> {
+  const installed: Installed = new Map();
+  for (const pkg of packages) {
+    const versions = new Map<string, string>();
+    for (const name of Object.keys(pkg.dependencies))
+      for (let dir = join(root, pkg.directory); ; dir = dirname(dir)) {
+        const file = Bun.file(join(dir, "node_modules", name, "package.json"));
+        if (await file.exists()) {
+          const { version } = await file.json().catch(() => ({}));
+          if (typeof version === "string") versions.set(name, version);
+          break;
+        }
+        if (dir === root) break;
+      }
+    installed.set(pkg.directory, versions);
+  }
+  return installed;
+}
+const family = (name: string) =>
+  name.startsWith("@") ? name.split("/")[0] : name.split("-")[0];
+const published = (name: string, version: string) =>
+  fetch(
+    `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+  ).then(
+    (response) => response.ok,
+    () => false,
+  );
+// Packages released together (react and react-dom) break at runtime when one moves alone.
+// Related packages that shared a version must still share it, if the new version exists for both.
+export async function lockstepDrift(
+  before: Installed,
+  after: Installed,
+  exists = published,
+): Promise<string | undefined> {
+  for (const [directory, versions] of after) {
+    const old = before.get(directory);
+    if (!old) continue;
+    for (const [name, version] of versions) {
+      const previous = old.get(name);
+      if (!previous || previous === version) continue;
+      for (const [other, current] of versions)
+        if (
+          other !== name &&
+          family(other) === family(name) &&
+          old.get(other) === previous &&
+          current !== version &&
+          (await exists(other, version))
+        )
+          return `${name} moved to ${version} but ${other} stayed at ${current} in ${directory}; upgrade them together`;
+    }
+  }
 }
 
 export function projectContext(project: Project): string {
