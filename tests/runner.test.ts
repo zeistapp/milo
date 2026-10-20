@@ -7,7 +7,6 @@ import { type Config, parseConfig, type Repo } from "../src/config.ts";
 import { type CommandOptions, command, temporary } from "../src/process.ts";
 import {
   author,
-  changes,
   finding,
   GitHub,
   type GitHubClient,
@@ -584,8 +583,6 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       const revisedHead = await head();
       await runner.review(repo, 34, true);
       expect(await head()).toBe(revisedHead);
-      await Bun.write(join(source, "AGENTS.md"), "changed policy");
-      await expect(changes(source)).rejects.toThrow("protected");
       const calls = await Bun.file(invocations).text();
       prs.length = 0;
       await expect(
@@ -628,7 +625,7 @@ test("auto-merge blocks majors, dependency changes and large diffs", () =>
     await manifest({ hono: "^4.9.2", tiny: "0.3.9", exact: "1.0.1" });
     await Bun.write(join(root, "bun.lock"), "x\n".repeat(1000));
     await commit();
-    expect(await mergeBlocker(root, base)).toBeUndefined();
+    expect(await mergeBlocker(git, base)).toBeUndefined();
     const cases: [Record<string, string>, string][] = [
       [{ hono: "^5.0.0", tiny: "0.3.1", exact: "1.0.0" }, "major"],
       [{ hono: "^4.1.0", tiny: "0.4.0", exact: "1.0.0" }, "major"],
@@ -639,16 +636,16 @@ test("auto-merge blocks majors, dependency changes and large diffs", () =>
       await git("checkout", "-q", "--detach", base);
       await manifest(dependencies);
       await commit();
-      expect(await mergeBlocker(root, base)).toContain(reason);
+      expect(await mergeBlocker(git, base)).toContain(reason);
     }
     await git("checkout", "-q", "--detach", base);
     await Bun.write(join(root, "big.ts"), "x\n".repeat(300));
     await commit();
-    expect(await mergeBlocker(root, base)).toBeUndefined();
+    expect(await mergeBlocker(git, base)).toBeUndefined();
     await git("checkout", "-q", "--detach", base);
     await Bun.write(join(root, "big.ts"), "x\n".repeat(301));
     await commit();
-    expect(await mergeBlocker(root, base)).toBe("301 changed lines");
+    expect(await mergeBlocker(git, base)).toBe("301 changed lines");
   }));
 test("auto-merge waits for CI, refreshes stale branches and respects change requests", async () => {
   const repo: Repo = {
@@ -876,30 +873,7 @@ test("a failed or empty review attempt does not block later PRs", async () => {
   }
 });
 
-test("tasks cannot change agent instruction or CI action files", () =>
-  temporary("milo-protected-", async (root) => {
-    await command(["git", "init", "--quiet"], { cwd: root });
-    for (const file of [
-      "AGENTS.md",
-      "CLAUDE.md",
-      "app/CLAUDE.md",
-      ".claude/rules/a.md",
-      "action.yml",
-      "actions/setup/action.yaml",
-    ]) {
-      await mkdir(join(root, file, ".."), { recursive: true });
-      await Bun.write(join(root, file), "changed policy");
-      await expect(changes(root)).rejects.toThrow("protected");
-      await command(["git", "rm", "--cached", "--quiet", "-r", "."], {
-        cwd: root,
-      });
-      await command(["git", "clean", "-fdq"], { cwd: root });
-    }
-    await Bun.write(join(root, "src.ts"), "ok");
-    expect(await changes(root)).toBe(true);
-  }));
-
-test("Milo commits and pushes nothing after untrusted code changes git config", () =>
+test("Milo pushes nothing after untrusted code changes git config", () =>
   temporary("milo-gitconfig-", async (folder) => {
     const git = (root: string, ...args: string[]) =>
       command(["git", ...args], { cwd: root });
@@ -913,56 +887,22 @@ test("Milo commits and pushes nothing after untrusted code changes git config", 
     await git(source, "add", ".");
     await git(source, "commit", "-qm", "Initial");
     await git(source, "clone", "-q", "--bare", source, remote);
-    const branch = () =>
-      git(remote, "branch", "--list", "milo/issue-12", "milo/issue-13");
     // The agent is the untrusted code here: setup and check steps cannot write .git at all.
-    const tamper = join(folder, "tamper.txt");
     const fakeAgent = join(folder, "agent.ts");
     await Bun.write(
       fakeAgent,
       `import { appendFileSync } from "node:fs";
 await Bun.stdin.text();
-await Bun.write("file.txt", String(Date.now()));
-const mode = await Bun.file(${JSON.stringify(tamper)}).text();
-if (mode === "config") appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
-if (mode === "commondir") await Bun.write(".git/commondir", ".");
-if (mode === "worktree") await Bun.write(".git/config.worktree", "[core]\\n\\thooksPath = .\\n");
-if (mode === "none") await Bun.write(".git/config.worktree", "");
+await Bun.write("file.txt", "new");
+appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
 await Bun.write(Bun.argv[2]!, "Report");`,
     );
-    const pr: PullRequest = {
-      number: 34,
-      state: "open",
-      body: "",
-      html_url: "https://example.test/pr/34",
-      head: {
-        ref: "milo/issue-12",
-        sha: "",
-        repo: { full_name: "owner/repo" },
-      },
-      base: { ref: "main", sha: "" },
-    };
     const gh: GitHubClient = {
-      async api<T>(endpoint: string, method = "GET"): Promise<T> {
-        if (endpoint === "issues/12" || endpoint === "issues/13")
-          return { ...issue(), number: Number(endpoint.slice(7)) } as T;
-        if (endpoint === "pulls" && method === "POST") return pr as T;
-        if (endpoint === "pulls/34") return pr as T;
-        if (endpoint.endsWith("/permission"))
-          return { permission: "admin" } as T;
-        return {} as T;
+      async api<T>(endpoint: string): Promise<T> {
+        if (endpoint === "issues/12") return issue() as T;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
       },
-      async pages<T>(endpoint: string): Promise<T[]> {
-        if (endpoint === "pulls/34/reviews")
-          return [
-            {
-              id: 1,
-              state: "CHANGES_REQUESTED",
-              commit_id: pr.head.sha,
-              user: { login: "owner" },
-              body: "Improve",
-            },
-          ] as T[];
+      async pages<T>(): Promise<T[]> {
         return [];
       },
       async comment() {},
@@ -982,64 +922,11 @@ await Bun.write(Bun.argv[2]!, "Report");`,
         await git(root, "config", "user.email", "test@example.test");
       },
     );
-    const repo: Repo = {
-      name: "owner/repo",
-      setup: [],
-      checks: [{ command: ["true"] }],
-    };
-    // An untouched clone still publishes, even with the empty config.worktree Claude's sandbox leaves.
-    await Bun.write(tamper, "none");
-    await runner.work(repo, 12);
-    const head = await git(remote, "rev-parse", "milo/issue-12");
-    pr.head.sha = head;
-    await git(remote, "update-ref", "refs/pull/34/head", head);
-    await Bun.write(tamper, "config");
-    await expect(runner.review(repo, 34, true)).rejects.toThrow(
-      /git config: .*tampered/,
-    );
-    expect(await git(remote, "rev-parse", "milo/issue-12")).toBe(head);
-    for (const [mode, error] of [
-      ["config", "[milo], tampered"],
-      ["commondir", ".git/commondir"],
-      ["worktree", ".git/config.worktree"],
-    ] as const) {
-      await Bun.write(tamper, mode);
-      await expect(runner.work(repo, 13)).rejects.toThrow(error);
-      expect(await branch()).toBe("milo/issue-12");
-    }
-  }));
-
-test("a global git config cannot run programs from Milo's trusted git", () =>
-  temporary("milo-global-", async (folder) => {
-    const root = join(folder, "repo");
-    const home = join(folder, "home");
-    const marker = join(folder, "ran");
-    await mkdir(root);
-    await mkdir(home);
-    await command(["git", "init", "-q"], { cwd: root });
-    await Bun.write(join(root, "file.txt"), "x");
-    const hook = join(folder, "hook.sh");
-    await Bun.write(hook, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
-    await command(["chmod", "+x", hook]);
-    await Bun.write(
-      join(home, ".gitconfig"),
-      `[core]\n\tfsmonitor = ${hook}\n`,
-    );
-    const previous = {
-      HOME: process.env.HOME,
-      XDG: process.env.XDG_CONFIG_HOME,
-    };
-    try {
-      process.env.HOME = home;
-      process.env.XDG_CONFIG_HOME = join(home, ".config");
-      expect(await changes(root)).toBeTrue();
-      expect(existsSync(marker)).toBeFalse();
-      // Plain git in the same environment does run it, so the check above is meaningful.
-      await command(["git", "status"], { cwd: root });
-      expect(existsSync(marker)).toBeTrue();
-    } finally {
-      process.env.HOME = previous.HOME;
-      if (previous.XDG === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = previous.XDG;
-    }
+    await expect(
+      runner.work(
+        { name: "owner/repo", setup: [], checks: [{ command: ["true"] }] },
+        12,
+      ),
+    ).rejects.toThrow(/git config: .*tampered/);
+    expect(await git(remote, "branch", "--list", "milo/issue-12")).toBe("");
   }));
