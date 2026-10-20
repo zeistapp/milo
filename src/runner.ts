@@ -1,5 +1,4 @@
-import { lstatSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { runClaude } from "./claude.ts";
@@ -26,6 +25,7 @@ import {
   type Project,
   projectContext,
 } from "./project.ts";
+import { type Clone, type Git, openWorkspace } from "./workspace.ts";
 
 // GitHub responses carry user-written text; parse the fields Milo reads rather than casting.
 const User = z.object({ login: z.string() });
@@ -243,12 +243,11 @@ function breakingPart(version: string): string | undefined {
 }
 // Deterministic limits an agent's merge verdict cannot override. Returns why a change needs a human.
 export async function mergeBlocker(
-  root: string,
+  git: Git,
   base: string,
 ): Promise<string | undefined> {
-  const from = await git(root, "merge-base", base, "HEAD");
+  const from = await git("merge-base", base, "HEAD");
   const stats = await git(
-    root,
     "diff",
     "--numstat",
     "--no-renames",
@@ -275,7 +274,7 @@ export async function mergeBlocker(
   for (const path of manifests) {
     const [before, after] = await Promise.all(
       [from, "HEAD"].map((ref) =>
-        git(root, "show", `${ref}:${path}`).then(
+        git("show", `${ref}:${path}`).then(
           (text) => {
             const manifest = parse(Manifest, JSON.parse(text));
             return new Map(
@@ -303,32 +302,6 @@ export async function mergeBlocker(
     }
   }
 }
-// Git config can make git run programs, and trusted git holds the write token. Trusted git
-// skips global and system config, which untrusted code running as the same user could edit,
-// and reads only the clone's config, which assertGitIntact pins to its post-clone bytes.
-const gitEnv = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
-const git = (root: string, ...args: string[]) =>
-  command(["git", ...args], { cwd: root, env: gitEnv });
-const gitConfig = (root: string) => readFile(join(root, ".git", "config"));
-// Call after untrusted code runs in the clone and before trusted git runs there again.
-// CEILING: a process that outlives its step (the agent is not in the step sandbox) could
-// rewrite config after this check; running untrusted code in a separate copy would close that.
-async function assertGitIntact(root: string, snapshot: Buffer): Promise<void> {
-  const config = await gitConfig(root);
-  // Claude's Linux sandbox leaves an empty config.worktree as a mount point; empty sets nothing.
-  const added = ["commondir", "config.worktree"].filter((name) => {
-    const file = lstatSync(join(root, ".git", name), { throwIfNoEntry: false });
-    return file && (name === "commondir" || !file.isFile() || file.size > 0);
-  });
-  if (config.equals(snapshot) && !added.length) return;
-  // Names only: values could carry whatever untrusted code wrote.
-  const lines = (text: Buffer) => new Set(text.toString().split("\n"));
-  const changed = lines(snapshot).symmetricDifference(lines(config));
-  const names = [...changed].map((line) => line.split("=")[0]?.trim());
-  throw new Error(
-    `Untrusted code changed the clone's git config: ${[...new Set([...names, ...added.map((name) => `.git/${name}`)])].join(", ")}`,
-  );
-}
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);
   // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
@@ -345,7 +318,7 @@ async function steps(commands: Step[], root: string): Promise<void> {
     });
   }
 }
-export async function clone(repo: Repo, root: string): Promise<void> {
+export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
   const [name, email] = await author();
   for (const [key, value] of [
@@ -354,35 +327,8 @@ export async function clone(repo: Repo, root: string): Promise<void> {
     ["core.hooksPath", "/dev/null"],
     ["credential.helper", "!gh auth git-credential"],
   ] as const) {
-    await git(root, "config", key, value);
+    await git("config", key, value);
   }
-}
-export async function changes(root: string): Promise<boolean> {
-  await git(root, "add", "--all");
-  const files = (
-    await git(root, "diff", "--cached", "--name-only", "-z")
-  ).split("\0");
-  if (
-    files.some(
-      (file) =>
-        file
-          .split("/")
-          .some((part) =>
-            [
-              "AGENTS.md",
-              "CLAUDE.md",
-              ".claude",
-              "action.yml",
-              "action.yaml",
-            ].includes(part),
-          ) ||
-        [".github/", ".milo/"].some((prefix) => file.startsWith(prefix)) ||
-        [".gitmodules", "milo.config.json"].includes(file),
-    )
-  ) {
-    throw new Error("Task changed protected automation or policy files");
-  }
-  return Boolean(await git(root, "diff", "--cached", "--stat"));
 }
 export async function runAgent(
   config: Config,
@@ -434,7 +380,7 @@ export class Runner {
   constructor(
     private config: Config,
     private github = (repo: Repo): GitHubClient => new GitHub(repo.name),
-    private cloneRepo = clone,
+    private cloneRepo: Clone = clone,
   ) {}
   async plan(
     repo: Repo,
@@ -511,8 +457,7 @@ export class Runner {
   ): Promise<{ title: string; body: string } | undefined> {
     return temporary("milo-scan-", async (folder) => {
       const root = join(folder, "repo");
-      await this.cloneRepo(repo, root);
-      const config = await gitConfig(root);
+      const workspace = await openWorkspace(repo, root, this.cloneRepo);
       const report = await runAgent(
         this.config,
         root,
@@ -527,9 +472,7 @@ export class Runner {
         true,
         this.config.agent.scanModel,
       );
-      await assertGitIntact(root, config);
-      if (await git(root, "status", "--porcelain"))
-        throw new Error("Read-only scan changed files");
+      await workspace.assertUnchanged();
       return finding(report);
     });
   }
@@ -548,12 +491,11 @@ export class Runner {
   private async checkedChanges(
     repo: Repo,
     root: string,
+    git: Git,
     original: string,
     baseline: Project & { installed: Installed },
-    config: Buffer,
   ): Promise<Project> {
-    await assertGitIntact(root, config);
-    if ((await git(root, "rev-parse", "HEAD")) !== original)
+    if ((await git("rev-parse", "HEAD")) !== original)
       throw new Error("Agent changed commit history");
     const after = await inspectProject(root, repo);
     // Install from the resulting lockfile, rather than trusting agent-modified node_modules.
@@ -572,7 +514,6 @@ export class Runner {
       ).values(),
     ];
     await steps(checks, root);
-    await assertGitIntact(root, config);
     return { ...after, checks };
   }
   private checkReport(project: Project): string {
@@ -622,12 +563,14 @@ export class Runner {
     try {
       await temporary("milo-work-", async (folder) => {
         const root = join(folder, "repo");
-        await this.cloneRepo(repo, root);
-        const config = await gitConfig(root);
-        const base = await git(root, "branch", "--show-current");
-        const original = await git(root, "rev-parse", "HEAD");
-        const remote = await git(
+        const { git, changes } = await openWorkspace(
+          repo,
           root,
+          this.cloneRepo,
+        );
+        const base = await git("branch", "--show-current");
+        const original = await git("rev-parse", "HEAD");
+        const remote = await git(
           "ls-remote",
           "--heads",
           "origin",
@@ -636,13 +579,13 @@ export class Runner {
         let report: string;
         let project: Project;
         if (remote) {
-          await git(root, "fetch", "origin", `refs/heads/${branch}`);
-          await git(root, "checkout", "--detach", "FETCH_HEAD");
+          await git("fetch", "origin", `refs/heads/${branch}`);
+          await git("checkout", "--detach", "FETCH_HEAD");
           project = await this.prepare(repo, root);
           report =
             "Recovered an existing task branch after interrupted publication. Review the diff before merging.";
         } else {
-          await git(root, "checkout", "-b", branch);
+          await git("checkout", "-b", branch);
           const baseline = await this.prepare(repo, root);
           report = await runAgent(
             this.config,
@@ -664,12 +607,12 @@ export class Runner {
           project = await this.checkedChanges(
             repo,
             root,
+            git,
             original,
             baseline,
-            config,
           );
           await recheck();
-          if (!(await changes(root))) {
+          if (!(await changes())) {
             await gh.comment(
               number,
               "Review completed; no changes produced.\n\n" +
@@ -682,8 +625,8 @@ export class Runner {
             });
             return;
           }
-          await git(root, "commit", "-m", `Maintenance for issue #${number}`);
-          await git(root, "push", "origin", `HEAD:refs/heads/${branch}`);
+          await git("commit", "-m", `Maintenance for issue #${number}`);
+          await git("push", "origin", `HEAD:refs/heads/${branch}`);
         }
         await recheck();
         const pr = parse(
@@ -857,16 +800,18 @@ export class Runner {
     }
     return temporary("milo-review-", async (folder) => {
       const root = join(folder, "repo");
-      await this.cloneRepo(repo, root);
-      const config = await gitConfig(root);
-      await git(root, "fetch", "origin", `refs/pull/${number}/head`);
-      await git(root, "checkout", "--detach", "FETCH_HEAD");
-      if ((await git(root, "rev-parse", "HEAD")) !== pr.head.sha)
+      const { git, changes, assertUnchanged } = await openWorkspace(
+        repo,
+        root,
+        this.cloneRepo,
+      );
+      await git("fetch", "origin", `refs/pull/${number}/head`);
+      await git("checkout", "--detach", "FETCH_HEAD");
+      if ((await git("rev-parse", "HEAD")) !== pr.head.sha)
         throw new Error("PR changed during checkout; retry");
       if (!revise) {
         const project = await inspectProject(root, repo);
         const diff = await git(
-          root,
           "diff",
           "--no-ext-diff",
           "--no-textconv",
@@ -897,14 +842,12 @@ export class Runner {
         validatePR(current, repo);
         if (current.head.sha !== pr.head.sha)
           throw new Error("PR changed during review; retry");
-        await assertGitIntact(root, config);
-        if (await git(root, "status", "--porcelain"))
-          throw new Error("Read-only review changed files");
+        await assertUnchanged();
         let marker = reviewMarker(pr.head.sha);
         let note = "";
         if (await this.autoMergeCategory(gh, repo, pr)) {
           const blocker = /(?:^|\n)\s*verdict:\s*merge\s*$/i.test(report)
-            ? await mergeBlocker(root, pr.base.sha)
+            ? await mergeBlocker(git, pr.base.sha)
             : "review verdict";
           if (blocker)
             note = `\n\nAuto-merge held (${blocker}); a human must review this PR.`;
@@ -937,11 +880,11 @@ export class Runner {
       const project = await this.checkedChanges(
         repo,
         root,
+        git,
         pr.head.sha,
         baseline,
-        config,
       );
-      if (!(await changes(root))) {
+      if (!(await changes())) {
         console.log("No revision produced; the PR still needs human attention");
         return false;
       }
@@ -955,9 +898,8 @@ export class Runner {
         ))
       )
         throw new Error("Review request withdrawn; retry");
-      await git(root, "commit", "-m", `Address review for PR #${number}`);
+      await git("commit", "-m", `Address review for PR #${number}`);
       await git(
-        root,
         "push",
         `--force-with-lease=refs/heads/${pr.head.ref}:${pr.head.sha}`,
         "origin",
