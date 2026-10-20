@@ -38,7 +38,7 @@ export const categoryNames = Current.options;
 // Each scan stays in its area, with its own evidence bar, so a finding has one obvious home.
 export const categories = {
   dependencies:
-    "Upgrade compatible dependencies and lockfiles, including any with known vulnerabilities. Consult current official release notes. Keep major upgrades separate.",
+    "Upgrade compatible dependencies and lockfiles, including any with known vulnerabilities. Consult current official release notes. Move packages released together, such as react and react-dom, to the same version. Keep major upgrades separate.",
   security:
     "Review security-sensitive code: authentication, authorisation, injection, secret handling and data crossing trust boundaries. Show the exploit path. " +
     "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. Add Zod only where it replaces hand-written validation or unchecked casts. " +

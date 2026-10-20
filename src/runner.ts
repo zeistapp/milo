@@ -18,7 +18,10 @@ import {
 import guidelines from "./guidelines.txt" with { type: "text" };
 import { command, confine, inside, sandboxEnv, temporary } from "./process.ts";
 import {
+  type Installed,
   inspectProject,
+  installedVersions,
+  lockstepDrift,
   Manifest,
   type Project,
   projectContext,
@@ -530,19 +533,23 @@ export class Runner {
       return finding(report);
     });
   }
-  private async prepare(repo: Repo, root: string): Promise<Project> {
+  private async prepare(
+    repo: Repo,
+    root: string,
+  ): Promise<Project & { installed: Installed }> {
     const project = await inspectProject(root, repo);
     for (const warning of project.warnings)
       console.log(`Validation gap: ${warning}`);
     await steps(project.setup, root);
+    const installed = await installedVersions(root, project.packages);
     await steps(project.checks, root);
-    return project;
+    return { ...project, installed };
   }
   private async checkedChanges(
     repo: Repo,
     root: string,
     original: string,
-    baseline: Project,
+    baseline: Project & { installed: Installed },
     config: Buffer,
   ): Promise<Project> {
     await assertGitIntact(root, config);
@@ -551,6 +558,11 @@ export class Runner {
     const after = await inspectProject(root, repo);
     // Install from the resulting lockfile, rather than trusting agent-modified node_modules.
     await steps(after.setup, root);
+    const drift = await lockstepDrift(
+      baseline.installed,
+      await installedVersions(root, after.packages),
+    );
+    if (drift) throw new Error(drift);
     const checks = [
       ...new Map(
         [...baseline.checks, ...after.checks].map((step) => [
@@ -631,7 +643,7 @@ export class Runner {
             "Recovered an existing task branch after interrupted publication. Review the diff before merging.";
         } else {
           await git(root, "checkout", "-b", branch);
-          project = await this.prepare(repo, root);
+          const baseline = await this.prepare(repo, root);
           report = await runAgent(
             this.config,
             root,
@@ -647,13 +659,13 @@ export class Runner {
               "If the evidence or plan no longer holds, make no changes and explain why in your report; " +
               "the ticket then closes with that report." +
               "\n" +
-              projectContext(project),
+              projectContext(baseline),
           );
           project = await this.checkedChanges(
             repo,
             root,
             original,
-            project,
+            baseline,
             config,
           );
           await recheck();
@@ -908,7 +920,7 @@ export class Runner {
         );
         return true;
       }
-      let project = await this.prepare(repo, root);
+      const baseline = await this.prepare(repo, root);
       const ids = new Set(requests.map((review) => review.id));
       const inline = parse(
         z.array(Comment),
@@ -920,13 +932,13 @@ export class Runner {
         "Address these review requests without expanding scope:\n" +
           JSON.stringify({ reviews: requests, inlineComments: inline }) +
           "\n" +
-          projectContext(project),
+          projectContext(baseline),
       );
-      project = await this.checkedChanges(
+      const project = await this.checkedChanges(
         repo,
         root,
         pr.head.sha,
-        project,
+        baseline,
         config,
       );
       if (!(await changes(root))) {

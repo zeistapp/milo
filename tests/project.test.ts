@@ -3,7 +3,12 @@ import { mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { temporary } from "../src/process.ts";
-import { inspectProject, projectContext } from "../src/project.ts";
+import {
+  inspectProject,
+  installedVersions,
+  lockstepDrift,
+  projectContext,
+} from "../src/project.ts";
 
 async function manifest(
   root: string,
@@ -471,4 +476,52 @@ describe("project profiling edge cases", () => {
     });
     expect(untested.warnings).toEqual([".: no test/test:ci script detected"]);
   });
+});
+
+test("packages released together cannot drift apart", async () => {
+  const versions = (react: string, dom: string, radix = "1.1.0") =>
+    temporary("milo-installed-", async (root) => {
+      const install = (dir: string, name: string, version: string) =>
+        Bun.write(
+          join(root, dir, "node_modules", name, "package.json"),
+          JSON.stringify({ version }),
+        );
+      await install(".", "react", react);
+      // Workspaces may nest their own copy; Node resolution finds it first.
+      await install("apps/web", "react-dom", dom);
+      await install("apps/web", "@radix-ui/react-dialog", radix);
+      await install(".", "@radix-ui/react-popover", "1.1.0");
+      const dependencies = {
+        react: "^19",
+        "react-dom": "^19",
+        "@radix-ui/react-dialog": "^1",
+        "@radix-ui/react-popover": "^1",
+        missing: "^1",
+      };
+      return installedVersions(root, [{ directory: "apps/web", dependencies }]);
+    });
+  const before = await versions("19.2.0", "19.2.0");
+  expect([...(before.get("apps/web") ?? [])]).toEqual([
+    ["react", "19.2.0"],
+    ["react-dom", "19.2.0"],
+    ["@radix-ui/react-dialog", "1.1.0"],
+    ["@radix-ui/react-popover", "1.1.0"],
+  ]);
+  const always = async () => true;
+  expect(
+    await lockstepDrift(before, await versions("19.2.1", "19.2.0"), always),
+  ).toBe(
+    "react moved to 19.2.1 but react-dom stayed at 19.2.0 in apps/web; upgrade them together",
+  );
+  expect(
+    await lockstepDrift(before, await versions("19.2.1", "19.2.1"), always),
+  ).toBeUndefined();
+  // A sibling that never published the new version is released separately.
+  expect(
+    await lockstepDrift(
+      before,
+      await versions("19.2.0", "19.2.0", "1.1.1"),
+      async (name) => name !== "@radix-ui/react-popover",
+    ),
+  ).toBeUndefined();
 });
