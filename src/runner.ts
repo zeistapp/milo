@@ -24,7 +24,7 @@ import {
   Review,
 } from "./github.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
-import { command, inside, sandboxed, temporary } from "./process.ts";
+import { command, inside, keptLog, sandboxed, temporary } from "./process.ts";
 import {
   type Installed,
   inspectProject,
@@ -124,6 +124,8 @@ export async function runAgent(
     if (!(await file.exists()) || file.size > 50_000)
       throw new Error("Agent report missing or too large");
     const report = (await file.text()).trim();
+    const kept = keptLog("agent-report");
+    if (kept) await Bun.write(kept, report);
     if (!report) throw new Error("Agent report is empty");
     return report;
   });

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, openSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -198,6 +198,16 @@ export function sandboxEnv(home: string): Record<string, string> {
     XDG_STATE_HOME: join(home, ".local/state"),
   };
 }
+// The action sets MILO_LOG_DIR on private repos and uploads it when a run fails, since
+// CI logs never show step output or agent reports.
+let kept = 0;
+export function keptLog(name: string): string | undefined {
+  const dir = process.env.MILO_LOG_DIR;
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const slug = name.replace(/[^\w.-]+/g, "-").slice(0, 60);
+  return join(dir, `${String(++kept).padStart(3, "0")}-${slug}.log`);
+}
 // Runs a setup or check step in the sandbox. root and home must be real paths.
 export async function sandboxed(
   step: Step,
@@ -206,13 +216,14 @@ export async function sandboxed(
   logFile?: string,
 ): Promise<string> {
   const cwd = await inside(root, step.cwd);
+  const label = `${step.cwd ?? "."}: ${step.command.join(" ")}`;
   return command(confine(step.command, root, home, cwd), {
     cwd,
     trusted: false,
     timeoutSeconds: 900,
     env: sandboxEnv(home),
-    label: `${step.cwd ?? "."}: ${step.command.join(" ")}`,
-    logFile,
+    label,
+    logFile: logFile ?? keptLog(label),
   });
 }
 export async function temporary<T>(
