@@ -4,16 +4,25 @@ import { z } from "zod";
 import { runClaude } from "./claude.ts";
 import {
   type Argv,
-  Category,
+  type Category,
   type Config,
   categories,
   categoryNames,
   type Period,
   parse,
   type Repo,
-  retiredCategories,
   type Step,
 } from "./config.ts";
+import {
+  author,
+  Comment,
+  GitHub,
+  type GitHubClient,
+  Issue,
+  Link,
+  PullRequest,
+  Review,
+} from "./github.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
 import { command, confine, inside, sandboxEnv, temporary } from "./process.ts";
 import {
@@ -21,119 +30,28 @@ import {
   inspectProject,
   installedVersions,
   lockstepDrift,
-  Manifest,
   type Project,
   projectContext,
 } from "./project.ts";
+import {
+  failed,
+  failedStamp,
+  finding,
+  issueCategory,
+  labels,
+  latestRequests,
+  mergeApproved,
+  mergeBlocker,
+  periodKey,
+  reviewed,
+  reviewStamp,
+  scannedNote,
+  ticketStamp,
+  validateIssue,
+  validatePR,
+} from "./rules.ts";
 import { type Clone, type Git, openWorkspace } from "./workspace.ts";
 
-// GitHub responses carry user-written text; parse the fields Milo reads rather than casting.
-const User = z.object({ login: z.string() });
-const Link = z.object({ html_url: z.string() });
-export const Issue = z.object({
-  number: z.number(),
-  title: z.string(),
-  body: z.string().nullable(),
-  state: z.string(),
-  labels: z.array(z.object({ name: z.string() })),
-  pull_request: z.unknown().optional(),
-  html_url: z.string(),
-  created_at: z.string(),
-});
-export type Issue = z.infer<typeof Issue>;
-const Ref = z.object({ ref: z.string(), sha: z.string() });
-export const PullRequest = z.object({
-  number: z.number(),
-  state: z.string(),
-  body: z.string().nullable(),
-  html_url: z.string(),
-  head: Ref.extend({
-    repo: z.object({ full_name: z.string() }).nullable(),
-  }),
-  base: Ref,
-});
-export type PullRequest = z.infer<typeof PullRequest>;
-export const Review = z.object({
-  id: z.number(),
-  state: z.string(),
-  // Null when the commit was garbage collected, e.g. after a force-push.
-  commit_id: z.string().nullable(),
-  user: User.nullable(),
-  body: z.string(),
-});
-export type Review = z.infer<typeof Review>;
-const Comment = z.object({
-  body: z.string(),
-  user: User.nullable(),
-  pull_request_review_id: z.number().nullish(),
-});
-export interface GitHubClient {
-  api(endpoint: string, method?: string, payload?: unknown): Promise<unknown>;
-  pages(endpoint: string): Promise<unknown[]>;
-  comment(number: number, body: string): Promise<void>;
-  viewer(): Promise<string>;
-}
-export class GitHub implements GitHubClient {
-  constructor(private repo: string) {}
-  async api(
-    endpoint: string,
-    method = "GET",
-    payload?: unknown,
-  ): Promise<unknown> {
-    const args: Argv = [
-      "gh",
-      "api",
-      `repos/${this.repo}/${endpoint}`,
-      "--method",
-      method,
-    ];
-    if (payload !== undefined) args.push("--input", "-");
-    const output = await command(args, {
-      input: payload === undefined ? undefined : JSON.stringify(payload),
-    });
-    if (!output) throw new Error("GitHub returned an empty response");
-    return JSON.parse(output);
-  }
-  async pages(endpoint: string): Promise<unknown[]> {
-    const separator = endpoint.includes("?") ? "&" : "?";
-    const output = await command([
-      "gh",
-      "api",
-      `repos/${this.repo}/${endpoint}${separator}per_page=100`,
-      "--paginate",
-      "--slurp",
-    ]);
-    return parse(z.array(z.array(z.unknown())), JSON.parse(output)).flat();
-  }
-  async comment(number: number, body: string): Promise<void> {
-    await this.api(`issues/${number}/comments`, "POST", { body });
-  }
-  async viewer(): Promise<string> {
-    return (
-      appLogin() ??
-      parse(User, JSON.parse(await command(["gh", "api", "user"]))).login
-    );
-  }
-}
-// An App installation token can't read GET /user, so the workflow passes the App's slug.
-const appLogin = () =>
-  process.env.MILO_APP_SLUG ? `${process.env.MILO_APP_SLUG}[bot]` : undefined;
-// Commits show as the App's bot when Milo runs as an App, as github-actions[bot] otherwise.
-export async function author(): Promise<[name: string, email: string]> {
-  const login = appLogin();
-  if (!login)
-    return [
-      "github-actions[bot]",
-      "41898282+github-actions[bot]@users.noreply.github.com",
-    ];
-  const { id } = parse(
-    z.object({ id: z.number() }),
-    JSON.parse(
-      await command(["gh", "api", `users/${encodeURIComponent(login)}`]),
-    ),
-  );
-  return [login, `${id}+${login}@users.noreply.github.com`];
-}
 // Harness rules come last so shared guidance cannot loosen them.
 const policy = `${guidelines}
 ## Harness policy
@@ -146,166 +64,6 @@ Finish with a report. Never include credentials, secret values or sensitive expl
 The report is published as-is as the ticket, pull request description or review comment, and maintainers read many of them. Use as few words as the reader needs to decide and act. Lead with the point. Prefer short bullets with file:line references over prose and quoted code. Omit restated ticket or diff text, process narration, harness check lists, things that are fine or unchanged, and non-blocking nits.
 Open a PR description with a short paragraph a teammate new to this code can follow: what goes wrong today and when it bites, how this change fixes it, and what that gains. Use plain words and name the behaviour, not just the function. File:line bullets follow.
 Keep a review under 120 words, and a PR description or ticket under 200.`;
-const labels = {
-  "milo:task": "64748b",
-  "milo:ready": "16a34a",
-  "milo:blocked": "dc2626",
-};
-const branchPattern = /^milo\/issue-[1-9][0-9]*$/;
-const reviewMarker = (sha: string) => `<!-- milo:review:${sha} -->`;
-const mergeMarker = "<!-- milo:merge -->";
-// Records that a scheduled review or revision left nothing on this head for these change requests.
-const failedMarker = (sha: string, requests: Review[]) =>
-  `<!-- milo:failed:${sha}:${requests.map((review) => review.id).join(",")} -->`;
-function week(date: Date): string {
-  const day = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-  );
-  day.setUTCDate(day.getUTCDate() + 4 - (day.getUTCDay() || 7));
-  const first = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
-  return `${day.getUTCFullYear()}-W${String(Math.ceil(((+day - +first) / 86400000 + 1) / 7)).padStart(2, "0")}`;
-}
-export function periodKey(period: Period, today = new Date()): string {
-  return period === "week"
-    ? week(today)
-    : today.toISOString().slice(0, period === "day" ? 10 : 7);
-}
-// The category label's description records the last scan, so clean scans leave no issue behind.
-const scannedNote = (key: string) => `Milo scanned ${key}`;
-export function finding(
-  report: string,
-): { title: string; body: string } | undefined {
-  if (/(?:^|\n)\s*verdict:\s*clean\s*$/i.test(report)) return;
-  const [first = "", ...rest] = report.split("\n");
-  const title = /^(?:\*\*)?title:(?:\*\*)?\s*(.+)$/i.exec(first.trim())?.[1];
-  if (!title) throw new Error("Scan report has neither a title nor a verdict");
-  return { title: title.trim().slice(0, 200), body: rest.join("\n").trim() };
-}
-// Labels only: issue authors can edit the body, but labelling needs triage access.
-export function issueCategory(issue: Issue): Category | undefined {
-  const matches = new Set(
-    [...categoryNames, ...Object.keys(retiredCategories)]
-      .filter((name) =>
-        issue.labels.some((label) => label.name === `milo:${name}`),
-      )
-      .map((name) => parse(Category, name)),
-  );
-  return matches.size === 1 ? [...matches][0] : undefined;
-}
-export function validateIssue(issue: Issue): void {
-  const names = new Set(issue.labels.map((label) => label.name));
-  if (
-    issue.state !== "open" ||
-    Object.hasOwn(issue, "pull_request") ||
-    !names.has("milo:task") ||
-    !names.has("milo:ready") ||
-    names.has("milo:blocked")
-  ) {
-    throw new Error("Issue must be open, ready, a Milo task, and not blocked");
-  }
-}
-export function validatePR(pr: PullRequest, repo: Repo): void {
-  if (
-    pr.state !== "open" ||
-    pr.head.repo?.full_name.toLowerCase() !== repo.name.toLowerCase() ||
-    !branchPattern.test(pr.head.ref)
-  ) {
-    throw new Error(
-      "Only open Milo PRs from the configured repository are supported",
-    );
-  }
-}
-export function latestRequests(reviews: Review[], sha?: string): Review[] {
-  const latest = new Map<string, Review>();
-  for (const review of [...reviews].sort((a, b) => a.id - b.id)) {
-    if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state))
-      // A review without a user stands alone, so it is never superseded.
-      latest.set(review.user?.login ?? `#${review.id}`, review);
-  }
-  return [...latest.values()].filter(
-    (review) =>
-      review.state === "CHANGES_REQUESTED" &&
-      (sha === undefined || review.commit_id === sha),
-  );
-}
-const lockfiles = new Set([
-  "bun.lock",
-  "bun.lockb",
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-]);
-// CEILING: line count is a crude proxy for "minor"; make it configurable if it holds safe changes.
-const mergeLineLimit = 300;
-const plainVersion = /^[\^~]?(\d+)\.(\d+)\.(\d+)$/;
-function breakingPart(version: string): string | undefined {
-  const match = plainVersion.exec(version);
-  if (!match) return;
-  const [, major, minor, patch] = match;
-  return major !== "0" ? major : minor !== "0" ? `0.${minor}` : `0.0.${patch}`;
-}
-// Deterministic limits an agent's merge verdict cannot override. Returns why a change needs a human.
-export async function mergeBlocker(
-  git: Git,
-  base: string,
-): Promise<string | undefined> {
-  const from = await git("merge-base", base, "HEAD");
-  const stats = await git(
-    "diff",
-    "--numstat",
-    "--no-renames",
-    from,
-    "HEAD",
-    "--",
-  );
-  let lines = 0;
-  const manifests: string[] = [];
-  for (const row of stats.split("\n").filter(Boolean)) {
-    const [added = "-", deleted = "-", path = ""] = row.split("\t");
-    if (added === "-" || deleted === "-") return "binary change";
-    const name = path.split("/").at(-1) ?? "";
-    if (name === "package.json") manifests.push(path);
-    if (!lockfiles.has(name)) lines += Number(added) + Number(deleted);
-  }
-  if (lines > mergeLineLimit) return `${lines} changed lines`;
-  const fields = [
-    "dependencies",
-    "devDependencies",
-    "peerDependencies",
-    "optionalDependencies",
-  ] as const;
-  for (const path of manifests) {
-    const [before, after] = await Promise.all(
-      [from, "HEAD"].map((ref) =>
-        git("show", `${ref}:${path}`).then(
-          (text) => {
-            const manifest = parse(Manifest, JSON.parse(text));
-            return new Map(
-              fields.flatMap((field) =>
-                Object.entries(manifest[field]).map(([name, value]) => [
-                  `${field}:${name}`,
-                  value,
-                ]),
-              ),
-            );
-          },
-          () => undefined,
-        ),
-      ),
-    );
-    if (!before || !after) return `${path} added or removed`;
-    for (const key of new Set([...before.keys(), ...after.keys()])) {
-      const [old, next] = [before.get(key), after.get(key)];
-      if (old === next) continue;
-      if (old === undefined || next === undefined)
-        return `dependency added or removed in ${path}`;
-      const part = breakingPart(old);
-      if (!part || part !== breakingPart(next))
-        return `major or non-semver change to ${key.split(":")[1]}`;
-    }
-  }
-}
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);
   // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
@@ -441,7 +199,7 @@ export class Runner {
                 ...(repo.autoReady?.includes(category) ? ["milo:ready"] : []),
               ],
               body:
-                `<!-- milo:${category}:${key} -->\n\n${found.body}\n\n` +
+                `${ticketStamp(category, key)}\n\n${found.body}\n\n` +
                 "Add `milo:ready` to authorise execution." +
                 (repo.autoMerge?.includes(category)
                   ? " Milo may merge a minor, reviewed PR after CI passes."
@@ -793,7 +551,7 @@ export class Runner {
     if (
       !revise &&
       (await this.botComments(gh, pr)).some((body) =>
-        body.startsWith(reviewMarker(pr.head.sha)),
+        reviewed(body, pr.head.sha),
       )
     ) {
       console.log("This commit already has an automated review");
@@ -849,7 +607,7 @@ export class Runner {
         if (current.head.sha !== pr.head.sha)
           throw new Error("PR changed during review; retry");
         await assertUnchanged();
-        let marker = reviewMarker(pr.head.sha);
+        let merge = false;
         let note = "";
         if (await this.autoMergeCategory(gh, repo, pr)) {
           const blocker = /(?:^|\n)\s*verdict:\s*merge\s*$/i.test(report)
@@ -858,14 +616,14 @@ export class Runner {
           if (blocker)
             note = `\n\nAuto-merge held (${blocker}); a human must review this PR.`;
           else {
-            marker += mergeMarker;
+            merge = true;
             note =
               "\n\nAuto-merge queued: Milo merges this commit after its CI passes.";
           }
         }
         await gh.comment(
           number,
-          `${marker}\n\nAutomated review (advisory):\n\n${report}${note}`,
+          `${reviewStamp(pr.head.sha, merge)}\n\nAutomated review (advisory):\n\n${report}${note}`,
         );
         return true;
       }
@@ -928,7 +686,7 @@ export class Runner {
     const fail = () =>
       gh.comment(
         pr.number,
-        `${failedMarker(pr.head.sha, requests)}\n\nMilo could not ${requests.length ? "revise" : "review"} this commit; see the workflow log. ` +
+        `${failedStamp(pr.head.sha, requests)}\n\nMilo could not ${requests.length ? "revise" : "review"} this commit; see the workflow log. ` +
           "It retries after a new commit or change request.",
       );
     let done: boolean;
@@ -987,25 +745,20 @@ export class Runner {
       }
       const requests = await this.requests(gh, pr.number, pr.head.sha);
       const comments = await this.botComments(gh, pr);
-      const failed = (requests: Review[]) =>
-        comments.some((body) =>
-          body.startsWith(failedMarker(pr.head.sha, requests)),
-        );
-      if (requests.length && !failed(requests)) {
+      const attempted = (requests: Review[]) =>
+        comments.some((body) => failed(body, pr.head.sha, requests));
+      if (requests.length && !attempted(requests)) {
         await this.attempt(gh, pr, requests, () =>
           this.review(repo, pr.number, true),
         );
         break;
       }
-      const reviewed = comments.find((body) =>
-        body.startsWith(reviewMarker(pr.head.sha)),
-      );
-      if (reviewed) {
-        if (reviewed.startsWith(reviewMarker(pr.head.sha) + mergeMarker))
-          await this.merge(gh, repo, pr);
+      const review = comments.find((body) => reviewed(body, pr.head.sha));
+      if (review) {
+        if (mergeApproved(review, pr.head.sha)) await this.merge(gh, repo, pr);
         continue;
       }
-      if (failed([])) continue;
+      if (attempted([])) continue;
       await this.attempt(gh, pr, [], () => this.review(repo, pr.number));
       break;
     }

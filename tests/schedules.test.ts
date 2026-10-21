@@ -1,13 +1,10 @@
 import { expect, spyOn, test } from "bun:test";
 import { main } from "../src/cli.ts";
 import { type Config, includeSelfRepo, type Repo } from "../src/config.ts";
+import type { GitHubClient, Issue } from "../src/github.ts";
 import { temporary } from "../src/process.ts";
-import {
-  type GitHubClient,
-  type Issue,
-  periodKey,
-  Runner,
-} from "../src/runner.ts";
+import { periodKey } from "../src/rules.ts";
+import { Runner } from "../src/runner.ts";
 
 const config: Config = { agent: { command: ["agent", "{output}"] }, repos: [] };
 const repo: Repo = { name: "owner/repo" };
