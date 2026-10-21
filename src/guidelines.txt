@@ -152,7 +152,8 @@ Keep the logic that drives a UI out of its components. Model it as a pure reduce
 - Handle every action in every state, even if the answer is to ignore it. A late response, a double click or a retry after an error must not leave the UI stuck.
 - Keep effects (fetching, timers, storage) outside the reducer. The reducer returns the next state; the component or a hook runs the effect and dispatches the result.
 - Test the reducer directly with the project's test runner, outside the browser: feed action sequences and assert on state, including failure and out-of-order paths.
-- Use what the project already has: React's `useReducer`, or an installed library such as XState, Redux or Zustand. Do not add a state library for this.
+- In React, keep state one component owns in `useReducer`. For state several components share, use Zustand with the reducer state under one key: `create((set) => ({ state: initial, dispatch: (action) => set((store) => ({ state: reducer(store.state, action) })) }))`. The reducer stays pure and testable without React. Avoid Zustand's `redux` middleware: it shallow-merges the reducer result, so fields from the previous state survive a transition. Add Zustand when shared state needs it, not for local state.
+- If the project already uses another state library, such as Redux, XState or Jotai, keep it. Do not add Zustand beside it or migrate to it. Outside React, use the framework's own store.
 
 Apply this when a component juggles several related pieces of state, async flows or error handling. Leave a single toggle or input as plain local state.
 
