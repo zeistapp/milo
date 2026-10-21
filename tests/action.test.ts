@@ -61,6 +61,20 @@ test("distributed action reads the caller's config from an external working dire
       expect(
         await command(["bash", "-c", script], { cwd: consumer }),
       ).toContain("Configuration valid");
+      // Without sudo or apt on macOS, the package step installs nothing and says so.
+      const install = action.runs.steps.find(
+        (step) => step.name === "Install system packages",
+      )?.run;
+      if (!install) throw new Error("Missing system package step");
+      expect(await command(["bash", "-c", install], { cwd: consumer })).toBe(
+        "",
+      );
+      const parsed = JSON.parse(await Bun.file(config).text());
+      parsed.repos[0].systemPackages = ["ffmpeg"];
+      await Bun.write(config, JSON.stringify(parsed));
+      expect(
+        await command(["bash", "-c", install], { cwd: consumer }),
+      ).toContain("::warning::systemPackages are installed only on Linux");
       // Shared schedules run task without a category; the CLI picks the work.
       const stub = join(consumer, "stub");
       await Bun.write(

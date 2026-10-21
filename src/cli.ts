@@ -37,7 +37,7 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   const configFile = values.config ?? "milo.config.json";
   if (values.help) {
     console.log(
-      "Milo: bun run milo [--config path] [--repo owner/repo] <validate|inspect|check|plan|task|reviews|work|review|revise|tick> [number/path] [--apply] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
+      "Milo: bun run milo [--config path] [--repo owner/repo] <validate|packages|inspect|check|plan|task|reviews|work|review|revise|tick> [number/path] [--apply] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
     );
     return;
   }
@@ -67,6 +67,7 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
     !action ||
     ![
       "validate",
+      "packages",
       "plan",
       "task",
       "reviews",
@@ -88,6 +89,14 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
     config = includeSelfRepo(config, values["self-repo"]);
   if (action === "validate") {
     console.log("Configuration valid");
+    return;
+  }
+  if (action === "packages") {
+    console.log(
+      [
+        ...new Set(config.repos.flatMap((repo) => repo.systemPackages ?? [])),
+      ].join(" "),
+    );
     return;
   }
   const repos = config.repos.filter(

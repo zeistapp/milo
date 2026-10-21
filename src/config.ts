@@ -90,6 +90,17 @@ const Repo = z
       .optional(),
     autoReady: z.array(Category).transform(unique).optional(),
     autoMerge: z.array(Category).transform(unique).optional(),
+    // Installed by the action on Linux, outside the sandbox, because setup steps cannot use sudo.
+    systemPackages: z
+      .array(
+        z
+          .string()
+          .regex(
+            /^[a-z0-9][a-z0-9+.-]*$/,
+            "systemPackages entries must be Debian package names",
+          ),
+      )
+      .optional(),
     setup: z.array(Step).optional(),
     checks: z
       .array(Step)
