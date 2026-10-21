@@ -53,7 +53,7 @@ export const categories = {
     "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +
     "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code.",
   performance:
-    "Measure a bottleneck, establish a baseline and optimise it. Do not claim improvements without measurements.",
+    "Find a bottleneck you can measure without editing files, report the baseline measurement and propose the optimisation with the target it must beat. Do not claim improvements without measurements.",
 } satisfies Record<Category, string>;
 export const Period = z.enum(["day", "week", "month"], {
   error: "period must be day, week, or month",

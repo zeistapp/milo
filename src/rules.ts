@@ -50,11 +50,15 @@ export const scannedNote = (key: string) => `Milo scanned ${key}`;
 export function finding(
   report: string,
 ): { title: string; body: string } | undefined {
-  if (/(?:^|\n)\s*verdict:\s*clean\s*$/i.test(report)) return;
-  const [first = "", ...rest] = report.split("\n");
-  const title = /^(?:\*\*)?title:(?:\*\*)?\s*(.+)$/i.exec(first.trim())?.[1];
-  if (!title) throw new Error("Scan report has neither a title nor a verdict");
-  return { title: title.trim().slice(0, 200), body: rest.join("\n").trim() };
+  // Models wrap these lines in markdown or lead with narration, so tolerate both.
+  if (/(?:^|\n)[\s>#*_`]*verdict:[\s*_`]*clean[\s*_`.]*$/i.test(report)) return;
+  const match = /^[\s>#*_]*title:[*_]*[ \t]*(\S.*)$/im.exec(report);
+  if (!match?.[1])
+    throw new Error("Scan report has neither a title nor a verdict");
+  return {
+    title: match[1].trim().slice(0, 200),
+    body: report.slice(match.index + match[0].length).trim(),
+  };
 }
 // Labels only: issue authors can edit the body, but labelling needs triage access.
 export function issueCategory(issue: Issue): Category | undefined {

@@ -46,3 +46,31 @@ test("failed setup skips checks without claiming they passed", () =>
     ]);
     expect(report.passed).toBeFalse();
   }));
+test("local checks run sandboxed like scheduled work", () =>
+  temporary("milo-local-", async (root) => {
+    const outside = join(import.meta.dir, `escape-${process.pid}`);
+    const report = await localCheck(root, join(root, "reports"), {
+      setup: [],
+      checks: [
+        {
+          command: [
+            process.execPath,
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(outside)}, "")`,
+          ],
+        },
+        {
+          command: [
+            process.execPath,
+            "-e",
+            "require('node:fs').writeFileSync('inside', '')",
+          ],
+        },
+      ],
+    });
+    expect(report.results.map((result) => result.status)).toEqual([
+      "failed",
+      "passed",
+    ]);
+    expect(await Bun.file(outside).exists()).toBeFalse();
+  }));
