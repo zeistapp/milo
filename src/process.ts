@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, writeSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import type { Argv } from "./config.ts";
+import type { Argv, Step } from "./config.ts";
 
 // Both sandboxes (untrusted steps here, the agent's shell in claude.ts) hide these.
 export const agentCredentials = [
@@ -157,9 +157,10 @@ export function confine(
       "--bind",
       root,
       root,
-      "--ro-bind",
-      join(root, ".git"),
-      join(root, ".git"),
+      // A local check may target a folder that is not a clone.
+      ...(existsSync(join(root, ".git"))
+        ? ["--ro-bind", join(root, ".git"), join(root, ".git")]
+        : []),
       "--bind",
       home,
       home,
@@ -196,6 +197,23 @@ export function sandboxEnv(home: string): Record<string, string> {
     XDG_DATA_HOME: join(home, ".local/share"),
     XDG_STATE_HOME: join(home, ".local/state"),
   };
+}
+// Runs a setup or check step in the sandbox. root and home must be real paths.
+export async function sandboxed(
+  step: Step,
+  root: string,
+  home: string,
+  logFile?: string,
+): Promise<string> {
+  const cwd = await inside(root, step.cwd);
+  return command(confine(step.command, root, home, cwd), {
+    cwd,
+    trusted: false,
+    timeoutSeconds: 900,
+    env: sandboxEnv(home),
+    label: `${step.cwd ?? "."}: ${step.command.join(" ")}`,
+    logFile,
+  });
 }
 export async function temporary<T>(
   prefix: string,

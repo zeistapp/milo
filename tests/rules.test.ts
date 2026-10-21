@@ -59,6 +59,17 @@ test("scan reports become a titled finding or nothing", () => {
     title: "Bump hono",
     body: "Evidence: package.json:3",
   });
+  for (const clean of [
+    "Done.\n`Verdict: clean`",
+    "**Verdict:** clean.",
+    "## Verdict: clean",
+  ])
+    expect(finding(clean)).toBeUndefined();
+  expect(
+    finding(
+      "I measured the routes.\n\n## Title: Index `created_at`\nBaseline: 2s",
+    ),
+  ).toEqual({ title: "Index `created_at`", body: "Baseline: 2s" });
   expect(() => finding("Some rambling report")).toThrow("verdict");
 });
 test("only approved tickets and same-repo Milo PRs may run", () => {

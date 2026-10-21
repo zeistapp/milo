@@ -24,7 +24,7 @@ import {
   Review,
 } from "./github.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
-import { command, confine, inside, sandboxEnv, temporary } from "./process.ts";
+import { command, inside, sandboxed, temporary } from "./process.ts";
 import {
   type Installed,
   inspectProject,
@@ -69,16 +69,7 @@ async function steps(commands: Step[], root: string): Promise<void> {
   // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
   const home = join(dirname(repo), "home");
   await mkdir(home, { recursive: true });
-  for (const step of commands) {
-    const cwd = await inside(root, step.cwd);
-    await command(confine(step.command, repo, home, cwd), {
-      cwd,
-      trusted: false,
-      timeoutSeconds: 900,
-      env: sandboxEnv(home),
-      label: `${step.cwd ?? "."}: ${step.command.join(" ")}`,
-    });
-  }
+  for (const step of commands) await sandboxed(step, repo, home);
 }
 export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
