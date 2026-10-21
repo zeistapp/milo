@@ -47,7 +47,7 @@ export const categories = {
     "Find behaviour that is wrong today: unhandled edge cases and errors, races, state that can get stuck, and code that contradicts its tests, types or docs. " +
     "Show the failing input or trace the fault, and add a test that fails before the fix.",
   architecture:
-    "Find friction where future changes will land: start from hot spots in recent git history, then trace those flows. Look for shallow modules, one concept spread across many files, coupling that leaks across seams, and names that hide what a module does or contradict the glossary; apply the deletion test. " +
+    "Find friction where future changes will land: start from hot spots in recent git history, then trace those flows. Look for shallow modules, one concept spread across many files, coupling that leaks across seams, and names that hide what a module does or contradict the glossary, and UI components that hold flow, async or error logic a pure reducer should own; apply the deletion test. " +
     "Propose one deepening that improves locality and testability: the modules involved, the smaller interface and how tests move to it. Preserve the established framework, build patterns and ADRs.",
   simplify:
     "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +

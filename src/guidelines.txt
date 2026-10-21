@@ -142,6 +142,20 @@ Never minimal on: understanding the problem, input validation at trust boundarie
 
 Non-trivial logic ships with one runnable check that fails if the logic breaks. Use the project's existing test setup if it has one; otherwise a small assert-based script, no new frameworks or fixtures. Trivial one-liners need none.
 
+## Design
+
+### UI state lives in reducers
+
+Keep the logic that drives a UI out of its components. Model it as a pure reducer: `(state, action) => state`. Actions name everything that can happen: user input, requests starting, succeeding and failing, timers firing. Components render state and dispatch actions; they do not decide what happens next.
+
+- Make state a discriminated union of the states the UI can be in (`idle`, `loading`, `error`, `success`), not a bag of booleans that allows impossible combinations.
+- Handle every action in every state, even if the answer is to ignore it. A late response, a double click or a retry after an error must not leave the UI stuck.
+- Keep effects (fetching, timers, storage) outside the reducer. The reducer returns the next state; the component or a hook runs the effect and dispatches the result.
+- Test the reducer directly with the project's test runner, outside the browser: feed action sequences and assert on state, including failure and out-of-order paths.
+- Use what the project already has: React's `useReducer`, or an installed library such as XState, Redux or Zustand. Do not add a state library for this.
+
+Apply this when a component juggles several related pieces of state, async flows or error handling. Leave a single toggle or input as plain local state.
+
 ## Build process
 
 Applies to new projects and features. Get a small, real, usable result running early. Expand through checked increments within the requested scope.
