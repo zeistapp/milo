@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  type Argv,
-  type Config,
-  parseConfig,
-  type Repo,
-} from "../src/config.ts";
+import type { Argv, Config, Repo } from "../src/config.ts";
+import type {
+  GitHubClient,
+  Issue,
+  PullRequest,
+  Review,
+} from "../src/github.ts";
 import {
   type CommandOptions,
   command,
@@ -16,81 +17,8 @@ import {
   sandboxEnv,
   temporary,
 } from "../src/process.ts";
-import {
-  author,
-  finding,
-  GitHub,
-  type GitHubClient,
-  type Issue,
-  issueCategory,
-  latestRequests,
-  mergeBlocker,
-  type PullRequest,
-  periodKey,
-  type Review,
-  Runner,
-  validateIssue,
-  validatePR,
-} from "../src/runner.ts";
-
-test("Milo acts and commits as its App's bot, or as the token owner without one", () =>
-  temporary("milo-identity-", async (bin) => {
-    const previous = {
-      MILO_APP_SLUG: process.env.MILO_APP_SLUG,
-      PATH: process.env.PATH,
-    };
-    // A fake gh answers both user lookups, so this checks which one Milo asks.
-    await Bun.write(
-      join(bin, "gh"),
-      `#!/bin/sh\ncase "$2" in user) echo '{"login":"owner"}' ;; users/milo-app%5Bbot%5D) echo '{"id":7}' ;; *) exit 1 ;; esac\n`,
-    );
-    await command(["chmod", "+x", join(bin, "gh")]);
-    try {
-      process.env.PATH = `${bin}:${previous.PATH}`;
-      delete process.env.MILO_APP_SLUG;
-      expect(await new GitHub("o/r").viewer()).toBe("owner");
-      expect(await author()).toEqual([
-        "github-actions[bot]",
-        "41898282+github-actions[bot]@users.noreply.github.com",
-      ]);
-      process.env.MILO_APP_SLUG = "milo-app";
-      expect(await new GitHub("o/r").viewer()).toBe("milo-app[bot]");
-      expect(await author()).toEqual([
-        "milo-app[bot]",
-        "7+milo-app[bot]@users.noreply.github.com",
-      ]);
-    } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
-  }));
-test("retired categories map to their replacements in tickets and config", () => {
-  const labelled = (...names: string[]): Issue => ({
-    ...issue(),
-    labels: names.map((name) => ({ name: `milo:${name}` })),
-  });
-  expect(issueCategory(labelled("organisation"))).toBe("architecture");
-  // Authors can edit the body, so a body marker alone grants no category.
-  expect(
-    issueCategory(issue("<!-- milo:organisation:2026-W42 -->")),
-  ).toBeUndefined();
-  // Two retired names for one category are not ambiguous.
-  expect(issueCategory(labelled("cleanup", "modernisation"))).toBe("simplify");
-  expect(issueCategory(labelled("cleanup", "bugs"))).toBeUndefined();
-  expect(
-    parseConfig({
-      agent: { provider: "claude" },
-      repos: [
-        {
-          name: "owner/repo",
-          categories: ["cleanup", "modernisation", "simplify", "organisation"],
-        },
-      ],
-    }).repos[0]?.categories,
-  ).toEqual(["simplify", "architecture"]);
-});
+import { periodKey } from "../src/rules.ts";
+import { Runner } from "../src/runner.ts";
 
 function issue(body = "", state = "open"): Issue {
   return {
@@ -103,14 +31,6 @@ function issue(body = "", state = "open"): Issue {
     labels: [{ name: "milo:task" }, { name: "milo:ready" }],
   };
 }
-test("scan reports become a titled finding or nothing", () => {
-  expect(finding("Looked everywhere.\nVerdict: clean")).toBeUndefined();
-  expect(finding("**Title:** Bump hono\n\nEvidence: package.json:3")).toEqual({
-    title: "Bump hono",
-    body: "Evidence: package.json:3",
-  });
-  expect(() => finding("Some rambling report")).toThrow("verdict");
-});
 test("scans open one finding per category and period, and skip clean or outstanding ones", () =>
   temporary("milo-scan-", async (folder) => {
     const fakeAgent = join(folder, "agent.ts");
@@ -231,59 +151,6 @@ test("malformed GitHub responses fail before Milo acts on them", async () => {
   await expect(runner.work({ name: "owner/repo" }, 12)).rejects.toThrow(
     "at labels",
   );
-});
-test("only approved tickets and same-repo Milo PRs may run", () => {
-  validateIssue(issue());
-  expect(() => validateIssue({ ...issue(), labels: [] })).toThrow();
-  expect(() => validateIssue({ ...issue(), pull_request: {} })).toThrow();
-  expect(() =>
-    validateIssue({
-      ...issue(),
-      labels: [...issue().labels, { name: "milo:blocked" }],
-    }),
-  ).toThrow();
-  const pr: PullRequest = {
-    number: 34,
-    state: "open",
-    body: "",
-    html_url: "",
-    head: {
-      ref: "milo/issue-12",
-      sha: "head",
-      repo: { full_name: "owner/repo" },
-    },
-    base: { ref: "main", sha: "base" },
-  };
-  validatePR(pr, { name: "owner/repo" });
-  expect(() =>
-    validatePR(
-      { ...pr, head: { ...pr.head, repo: { full_name: "attacker/repo" } } },
-      { name: "owner/repo" },
-    ),
-  ).toThrow();
-  expect(() =>
-    validatePR({ ...pr, state: "closed" }, { name: "owner/repo" }),
-  ).toThrow();
-});
-test("review revisions use the current effective review on the current commit", () => {
-  const request: Review = {
-    id: 1,
-    state: "CHANGES_REQUESTED",
-    commit_id: "head",
-    user: { login: "owner" },
-    body: "fix",
-  };
-  expect(latestRequests([request], "head")).toEqual([request]);
-  expect(latestRequests([request], "new-head")).toEqual([]);
-  expect(
-    latestRequests([request, { ...request, id: 2, state: "APPROVED" }], "head"),
-  ).toEqual([]);
-  expect(
-    latestRequests(
-      [request, { ...request, id: 2, state: "COMMENTED" }],
-      "head",
-    ),
-  ).toEqual([request]);
 });
 test("child processes lose GitHub credentials and time out", async () => {
   const github = [
@@ -648,46 +515,6 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
   15_000,
 );
 
-test("auto-merge blocks majors, dependency changes and large diffs", () =>
-  temporary("milo-merge-", async (root) => {
-    const git = (...args: string[]) => command(["git", ...args], { cwd: root });
-    const manifest = (dependencies: Record<string, string>) =>
-      Bun.write(join(root, "package.json"), JSON.stringify({ dependencies }));
-    const commit = async () => {
-      await git("add", ".");
-      await git("commit", "-qm", "change");
-      return git("rev-parse", "HEAD");
-    };
-    await git("init", "-q");
-    await git("config", "user.name", "Test");
-    await git("config", "user.email", "test@example.test");
-    await manifest({ hono: "^4.1.0", tiny: "0.3.1", exact: "1.0.0" });
-    const base = await commit();
-    await manifest({ hono: "^4.9.2", tiny: "0.3.9", exact: "1.0.1" });
-    await Bun.write(join(root, "bun.lock"), "x\n".repeat(1000));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBeUndefined();
-    const cases: [Record<string, string>, string][] = [
-      [{ hono: "^5.0.0", tiny: "0.3.1", exact: "1.0.0" }, "major"],
-      [{ hono: "^4.1.0", tiny: "0.4.0", exact: "1.0.0" }, "major"],
-      [{ hono: "latest", tiny: "0.3.1", exact: "1.0.0" }, "non-semver"],
-      [{ hono: "^4.1.0", tiny: "0.3.1" }, "removed"],
-    ];
-    for (const [dependencies, reason] of cases) {
-      await git("checkout", "-q", "--detach", base);
-      await manifest(dependencies);
-      await commit();
-      expect(await mergeBlocker(git, base)).toContain(reason);
-    }
-    await git("checkout", "-q", "--detach", base);
-    await Bun.write(join(root, "big.ts"), "x\n".repeat(300));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBeUndefined();
-    await git("checkout", "-q", "--detach", base);
-    await Bun.write(join(root, "big.ts"), "x\n".repeat(301));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBe("301 changed lines");
-  }));
 test("auto-merge waits for CI, refreshes stale branches and respects change requests", async () => {
   const repo: Repo = {
     name: "owner/repo",
