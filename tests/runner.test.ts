@@ -15,6 +15,7 @@ import {
   command,
   confine,
   sandboxEnv,
+  sandboxed,
   temporary,
 } from "../src/process.ts";
 import { periodKey } from "../src/rules.ts";
@@ -222,6 +223,32 @@ test("child processes lose GitHub credentials and time out", async () => {
   ).rejects.not.toThrow("private-value");
 });
 
+test("sandboxed steps keep their output in MILO_LOG_DIR for the failure artifact", () =>
+  temporary("milo-logs-", async (temp) => {
+    const folder = await realpath(temp);
+    const logs = join(folder, "logs");
+    process.env.MILO_LOG_DIR = logs;
+    try {
+      await expect(
+        sandboxed(
+          {
+            command: [
+              process.execPath,
+              "-e",
+              "console.error('why it broke');process.exit(1)",
+            ],
+          },
+          folder,
+          folder,
+        ),
+      ).rejects.toThrow("failed (exit 1)");
+    } finally {
+      delete process.env.MILO_LOG_DIR;
+    }
+    const [log] = [...new Bun.Glob("*.log").scanSync(logs)];
+    assert(log);
+    expect(await Bun.file(join(logs, log)).text()).toContain("why it broke");
+  }));
 test("untrusted steps cannot read Milo's token or write outside the clone", () =>
   temporary("milo-confine-", async (temp) => {
     const folder = await realpath(temp);

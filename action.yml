@@ -86,6 +86,7 @@ runs:
         INPUT_CATEGORY: ${{ inputs.category }}
         INPUT_PERIOD: ${{ inputs.period }}
         INPUT_SELF_REPO: ${{ inputs.self-repo }}
+        MILO_LOG_DIR: ${{ github.event.repository.private && format('{0}/milo-logs', runner.temp) || '' }}
       run: |
         if [ "$RUNNER_OS" = 'Windows' ]; then echo 'Milo currently supports Linux and macOS runners'; exit 1; fi
         args=(--config "$INPUT_CONFIG")
@@ -105,3 +106,12 @@ runs:
           *) echo 'Unknown Milo action'; exit 1 ;;
         esac
         bun "$MILO_ACTION_PATH/src/cli.ts" "${args[@]}"
+    # Private repos only: logs hold step output and agent reports, and a public repo's artifacts are readable by anyone.
+    - name: Keep logs from a failed run
+      if: failure() && github.event.repository.private
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: milo-logs-${{ inputs.action }}${{ inputs.category && format('-{0}', inputs.category) || '' }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/milo-logs/
+        retention-days: 3
+        if-no-files-found: ignore
