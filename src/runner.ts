@@ -143,7 +143,9 @@ Stay within the ticket scope. Do not commit, push, merge, publish, change CI/sec
 Do not delete user data or remove features. Prefer a small root-cause fix. Use installed APIs and current official documentation.
 Run relevant checks, report limitations honestly and provide evidence for findings. The harness owns commits and publication.
 Finish with a report. Never include credentials, secret values or sensitive exploit details in the report.
-The report is published as-is as the ticket, pull request description or review comment, and maintainers read many of them. Use as few words as the reader needs to decide and act. Lead with the point. Prefer short bullets with file:line references over prose and quoted code. Omit restated ticket or diff text, process narration, harness check lists, things that are fine or unchanged, and non-blocking nits. Keep a review or PR description under 120 words and a ticket under 200.`;
+The report is published as-is as the ticket, pull request description or review comment, and maintainers read many of them. Use as few words as the reader needs to decide and act. Lead with the point. Prefer short bullets with file:line references over prose and quoted code. Omit restated ticket or diff text, process narration, harness check lists, things that are fine or unchanged, and non-blocking nits.
+Open a PR description with a short paragraph a teammate new to this code can follow: what goes wrong today and when it bites, how this change fixes it, and what that gains. Use plain words and name the behaviour, not just the function. File:line bullets follow.
+Keep a review under 120 words, and a PR description or ticket under 200.`;
 const labels = {
   "milo:task": "64748b",
   "milo:ready": "16a34a",
