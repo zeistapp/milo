@@ -53,6 +53,19 @@ runs:
           printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
         fi
+    # Sandboxed steps cannot use sudo, so a repo lists the apt packages its steps need in systemPackages.
+    # The config schema allows only package names: no options, .deb paths or pins to other releases.
+    - name: Install system packages
+      shell: bash
+      env:
+        MILO_ACTION_PATH: ${{ github.action_path }}
+        INPUT_CONFIG: ${{ inputs.config }}
+      run: |
+        packages=$(bun "$MILO_ACTION_PATH/src/cli.ts" --config "$INPUT_CONFIG" packages)
+        test -n "$packages" || exit 0
+        if [ "$RUNNER_OS" != 'Linux' ]; then echo '::warning::systemPackages are installed only on Linux runners'; exit 0; fi
+        read -ra list <<< "$packages"
+        sudo apt-get install --yes --no-install-recommends "${list[@]}"
     - name: Install Claude Code
       if: inputs.claude-version != ''
       shell: bash

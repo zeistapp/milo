@@ -246,6 +246,15 @@ test("configuration validates categories, checks and command boundaries", () => 
       repos: [{ name: "owner/repo" }, { name: "Owner/Repo" }],
     }),
   ).toThrow("Duplicate repository");
+  const packages = (systemPackages: string[]) =>
+    parseConfig({ ...value, repos: [{ name: "owner/repo", systemPackages }] });
+  expect(
+    packages(["ffmpeg", "libstdc++6", "python3.12-dev"]).repos[0]
+      ?.systemPackages,
+  ).toEqual(["ffmpeg", "libstdc++6", "python3.12-dev"]);
+  // apt-get also takes options, local .deb paths and version or release pins.
+  for (const name of ["", "-o", "./x.deb", "x=1.0", "x/noble", "FFmpeg", "a b"])
+    expect(() => packages([name])).toThrow("Debian package name");
   // Without categories every category is enabled, so any auto list is allowed.
   expect(
     parseConfig({

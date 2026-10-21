@@ -3,8 +3,19 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { type Config, parseConfig, type Repo } from "../src/config.ts";
-import { type CommandOptions, command, temporary } from "../src/process.ts";
+import {
+  type Argv,
+  type Config,
+  parseConfig,
+  type Repo,
+} from "../src/config.ts";
+import {
+  type CommandOptions,
+  command,
+  confine,
+  sandboxEnv,
+  temporary,
+} from "../src/process.ts";
 import {
   author,
   finding,
@@ -396,6 +407,36 @@ console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], 
     expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();
     expect(await Bun.file(outside).exists()).toBeFalse();
   }));
+
+// zeist's tests build sites under their own bubblewrap, which must start inside Milo's.
+test.if(process.platform === "linux")(
+  "untrusted steps can start a nested bubblewrap sandbox",
+  () =>
+    temporary("milo-nested-", async (temp) => {
+      const root = join(await realpath(temp), "repo");
+      const home = join(await realpath(temp), "home");
+      await mkdir(join(root, ".git"), { recursive: true });
+      await mkdir(home);
+      // The same namespaces and mounts as zeist's lab/sandbox.ts.
+      const inner: Argv = [
+        "bwrap",
+        "--unshare-all",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "true",
+      ];
+      await command(confine(inner, root, home, root), {
+        cwd: root,
+        trusted: false,
+        env: sandboxEnv(home),
+      });
+    }),
+);
 
 test(
   "real git and subprocess flow: ticket, PR, review, revision and retry deduplication",

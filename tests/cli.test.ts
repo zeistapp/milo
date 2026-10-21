@@ -228,6 +228,25 @@ test("check runs the configured repo's checks and fails when they fail", () =>
     await expect(check()).rejects.toThrow("Local checks failed");
   }));
 
+test("packages prints every configured repo's system packages once", () =>
+  temporary("milo-cli-packages-", async (root) => {
+    const file = join(root, "packages.json");
+    await Bun.write(
+      file,
+      JSON.stringify({
+        agent: { provider: "claude" },
+        repos: [
+          { name: "owner/a", systemPackages: ["ffmpeg", "rsync"] },
+          { name: "owner/b", systemPackages: ["rsync", "git"] },
+          { name: "owner/c" },
+        ],
+      }),
+    );
+    await main(["--config", file, "packages"]);
+    await main(["--config", config, "packages"]);
+    expect(log.mock.calls).toEqual([["ffmpeg rsync git"], [""]]);
+  }));
+
 test("inspect profiles the target directory", () =>
   temporary("milo-cli-inspect-", async (root) => {
     await Bun.write(
