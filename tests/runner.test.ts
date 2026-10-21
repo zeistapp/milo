@@ -723,6 +723,9 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   ];
   await runner.runReviews(repo);
   expect(writes).toHaveLength(1);
+  reviews = [{ ...reviews[0], user: null, commit_id: null } as Review];
+  await runner.runReviews(repo);
+  expect(writes).toHaveLength(1);
   reviews = [];
   await runner.runReviews({ ...repo, autoMerge: [] });
   expect(writes).toHaveLength(1);
@@ -868,6 +871,55 @@ test("a failed or empty review attempt does not block later PRs", async () => {
       [34, false],
     ]);
     expect(comments[34]?.at(-1)?.body).toStartWith("<!-- milo:failed:c: -->");
+  } finally {
+    review.mockRestore();
+  }
+});
+
+test("null users and commits on GitHub entries do not stop reviews", async () => {
+  const pr: PullRequest = {
+    number: 34,
+    state: "open",
+    body: "",
+    html_url: "https://example.test/pr/34",
+    head: { ref: "milo/issue-34", sha: "a", repo: { full_name: "owner/repo" } },
+    base: { ref: "main", sha: "base" },
+  };
+  const request = { id: 1, state: "CHANGES_REQUESTED", body: "" };
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string): Promise<T> {
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      const responses: Record<string, unknown[]> = {
+        "pulls?state=open": [pr],
+        "pulls/34/reviews": [
+          { ...request, user: null, commit_id: "a" },
+          { ...request, id: 2, user: { login: "owner" }, commit_id: null },
+        ],
+        "issues/34/comments": [{ body: "hi", user: null }],
+      };
+      return (responses[endpoint] ?? []) as T[];
+    },
+    async comment() {},
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+  );
+  const calls: [number, boolean][] = [];
+  const review = spyOn(runner, "review").mockImplementation(
+    async (_repo, number, revise = false) => {
+      calls.push([number, revise]);
+      return true;
+    },
+  );
+  try {
+    await runner.runReviews({ name: "owner/repo" });
+    expect(calls).toEqual([[34, false]]);
   } finally {
     review.mockRestore();
   }

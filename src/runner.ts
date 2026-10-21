@@ -56,15 +56,16 @@ export type PullRequest = z.infer<typeof PullRequest>;
 export const Review = z.object({
   id: z.number(),
   state: z.string(),
-  commit_id: z.string(),
-  user: User,
+  // Null when the commit was garbage collected, e.g. after a force-push.
+  commit_id: z.string().nullable(),
+  user: User.nullable(),
   body: z.string(),
 });
 export type Review = z.infer<typeof Review>;
 const Comment = z.object({
   body: z.string(),
-  user: User,
-  pull_request_review_id: z.number().optional(),
+  user: User.nullable(),
+  pull_request_review_id: z.number().nullish(),
 });
 export interface GitHubClient {
   api(endpoint: string, method?: string, payload?: unknown): Promise<unknown>;
@@ -216,7 +217,8 @@ export function latestRequests(reviews: Review[], sha?: string): Review[] {
   const latest = new Map<string, Review>();
   for (const review of [...reviews].sort((a, b) => a.id - b.id)) {
     if (["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(review.state))
-      latest.set(review.user.login, review);
+      // A review without a user stands alone, so it is never superseded.
+      latest.set(review.user?.login ?? `#${review.id}`, review);
   }
   return [...latest.values()].filter(
     (review) =>
@@ -667,6 +669,8 @@ export class Runner {
       parse(z.array(Review), await gh.pages(`pulls/${number}/reviews`)),
       sha,
     )) {
+      // A writer's permission cannot be checked without a login.
+      if (!review.user) continue;
       const { permission } = parse(
         z.object({ permission: z.string() }),
         await gh.api(
@@ -688,7 +692,7 @@ export class Runner {
       z.array(Comment),
       await gh.pages(`issues/${pr.number}/comments`),
     )
-      .filter((comment) => comment.user.login === viewer)
+      .filter((comment) => comment.user?.login === viewer)
       .map((comment) => comment.body);
   }
   private async ticket(gh: GitHubClient, pr: PullRequest): Promise<Issue> {
