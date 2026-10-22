@@ -75,6 +75,27 @@ test("tasks cannot change agent instruction or CI action files", () =>
     expect(await changes()).toBe(true);
   }));
 
+test("tasks cannot move or delete protected files", () =>
+  temporary("milo-protected-move-", async (folder) => {
+    for (const file of [".github/workflows/ci.yml", "AGENTS.md"]) {
+      for (const change of [
+        ["mv", file, "moved.yml"],
+        ["rm", "--quiet", file],
+      ]) {
+        const root = join(folder, `${change[0]}-${file.replaceAll("/", "-")}`);
+        const { changes } = await open(root);
+        await mkdir(join(root, file, ".."), { recursive: true });
+        await Bun.write(join(root, file), "policy");
+        const git = (...args: string[]) =>
+          command(["git", "-c", "user.email=t@t", ...args], { cwd: root });
+        await git("add", "--all");
+        await git("commit", "-qm", "init");
+        await git(...change);
+        await expect(changes()).rejects.toThrow("protected");
+      }
+    }
+  }));
+
 test("a global git config cannot run programs from Milo's git", () =>
   temporary("milo-global-", async (folder) => {
     const root = join(folder, "repo");
