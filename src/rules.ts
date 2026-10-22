@@ -107,6 +107,36 @@ export function latestRequests(reviews: Review[], sha?: string): Review[] {
       (sha === undefined || review.commit_id === sha),
   );
 }
+export type CheckRun = { status: string; conclusion: string | null };
+export type CombinedStatus = { state: string; total_count: number };
+// Failed CI waits too: a later run retries once a new commit or rerun passes.
+export function ciState(
+  runs: CheckRun[],
+  status: CombinedStatus,
+): "none" | "waiting" | "passed" {
+  if (!runs.length && !status.total_count) return "none";
+  return runs.some(
+    (run) =>
+      run.status !== "completed" ||
+      !["success", "neutral", "skipped"].includes(run.conclusion ?? ""),
+  ) ||
+    (status.total_count && status.state !== "success")
+    ? "waiting"
+    : "passed";
+}
+// Picks what a scheduled run does with an open Milo PR from its bot-comment stamps.
+export function nextReviewStep(
+  sha: string,
+  requests: Review[],
+  botComments: string[],
+): "revise" | "review" | "merge" | "skip" {
+  const attempted = (requests: Review[]) =>
+    botComments.some((body) => failed(body, sha, requests));
+  if (requests.length && !attempted(requests)) return "revise";
+  const review = botComments.find((body) => reviewed(body, sha));
+  if (review) return mergeApproved(review, sha) ? "merge" : "skip";
+  return attempted([]) ? "skip" : "review";
+}
 const lockfiles = new Set([
   "bun.lock",
   "bun.lockb",
