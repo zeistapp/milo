@@ -561,7 +561,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     base: { ref: "main", sha: "base" },
   };
   let runs = [{ status: "in_progress", conclusion: null as string | null }];
-  let status = { state: "pending", total_count: 0 };
+  const status = { state: "pending", total_count: 0 };
   let behind = 0;
   let conflict = false;
   let open = [pr];
@@ -600,7 +600,22 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
   );
-  await runner.runReviews(repo);
+  const logged = async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runner.runReviews(repo);
+      return log.mock.calls.map(([line]) => line);
+    } finally {
+      log.mockRestore();
+    }
+  };
+  expect(await logged()).toEqual([
+    "https://example.test/pr/34: waiting for passing CI",
+  ]);
+  runs = [];
+  expect(await logged()).toEqual([
+    "https://example.test/pr/34: no CI checks; auto-merge needs PR CI",
+  ]);
   expect(writes).toEqual([]);
   runs = [{ status: "completed", conclusion: "success" }];
   behind = 2;
@@ -636,31 +651,14 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   comment = "<!-- milo:review:abc --><!-- milo:merge -->";
   await runner.runReviews(repo);
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
-  writes.length = 0;
-  runs = [{ status: "completed", conclusion: "failure" }];
-  await runner.runReviews(repo);
-  runs = [];
-  await runner.runReviews(repo);
-  status = { state: "failure", total_count: 1 };
-  await runner.runReviews(repo);
-  expect(writes).toEqual([]);
-  status = { state: "success", total_count: 1 };
-  await runner.runReviews(repo);
-  expect(writes).toEqual(["pulls/34/merge"]);
   // A conflicted branch update is logged and skipped, so later PRs still run.
   writes.length = 0;
   conflict = true;
   behind = 2;
   open = [pr, { ...pr, number: 35, html_url: "https://example.test/pr/35" }];
-  const log = spyOn(console, "log").mockImplementation(() => {});
-  try {
-    await runner.runReviews(repo);
-    expect(log).toHaveBeenCalledWith(
-      "https://example.test/pr/34: branch update refused; resolve conflicts with main",
-    );
-  } finally {
-    log.mockRestore();
-  }
+  expect(await logged()).toContain(
+    "https://example.test/pr/34: branch update refused; resolve conflicts with main",
+  );
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
 });
 

@@ -34,14 +34,14 @@ import {
   projectContext,
 } from "./project.ts";
 import {
-  failed,
+  ciState,
   failedStamp,
   finding,
   issueCategory,
   labels,
   latestRequests,
-  mergeApproved,
   mergeBlocker,
+  nextReviewStep,
   periodKey,
   reviewed,
   reviewStamp,
@@ -490,18 +490,12 @@ export class Runner {
       z.object({ state: z.string(), total_count: z.number() }),
       await gh.api(`commits/${pr.head.sha}/status`),
     );
-    if (!runs.length && !status.total_count) {
+    const ci = ciState(runs, status);
+    if (ci === "none") {
       console.log(`${pr.html_url}: no CI checks; auto-merge needs PR CI`);
       return;
     }
-    if (
-      runs.some(
-        (run) =>
-          run.status !== "completed" ||
-          !["success", "neutral", "skipped"].includes(run.conclusion ?? ""),
-      ) ||
-      (status.total_count && status.state !== "success")
-    ) {
+    if (ci === "waiting") {
       console.log(`${pr.html_url}: waiting for passing CI`);
       return;
     }
@@ -737,22 +731,16 @@ export class Runner {
         continue;
       }
       const requests = await this.requests(gh, pr.number, pr.head.sha);
-      const comments = await this.botComments(gh, pr);
-      const attempted = (requests: Review[]) =>
-        comments.some((body) => failed(body, pr.head.sha, requests));
-      if (requests.length && !attempted(requests)) {
-        await this.attempt(gh, pr, requests, () =>
-          this.review(repo, pr.number, true),
-        );
-        break;
-      }
-      const review = comments.find((body) => reviewed(body, pr.head.sha));
-      if (review) {
-        if (mergeApproved(review, pr.head.sha)) await this.merge(gh, repo, pr);
-        continue;
-      }
-      if (attempted([])) continue;
-      await this.attempt(gh, pr, [], () => this.review(repo, pr.number));
+      const step = nextReviewStep(
+        pr.head.sha,
+        requests,
+        await this.botComments(gh, pr),
+      );
+      if (step === "merge") await this.merge(gh, repo, pr);
+      if (step === "merge" || step === "skip") continue;
+      await this.attempt(gh, pr, step === "revise" ? requests : [], () =>
+        this.review(repo, pr.number, step === "revise"),
+      );
       break;
     }
   }
