@@ -65,9 +65,11 @@ export async function openWorkspace(
     git,
     async changes() {
       await git("add", "--all");
-      const files = (await git("diff", "--cached", "--name-only", "-z")).split(
-        "\0",
-      );
+      // --no-renames lists a moved file's old path too, so moving a
+      // protected file away cannot hide it from the check below.
+      const files = (
+        await git("diff", "--cached", "--no-renames", "--name-only", "-z")
+      ).split("\0");
       if (
         files.some(
           (file) =>
