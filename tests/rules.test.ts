@@ -4,6 +4,7 @@ import { parseConfig } from "../src/config.ts";
 import type { Issue, PullRequest, Review } from "../src/github.ts";
 import { command, temporary } from "../src/process.ts";
 import {
+  ciState,
   failed,
   failedStamp,
   finding,
@@ -11,6 +12,7 @@ import {
   latestRequests,
   mergeApproved,
   mergeBlocker,
+  nextReviewStep,
   reviewed,
   reviewStamp,
   validateIssue,
@@ -187,4 +189,65 @@ test("markers match only at the start of a comment and only for their commit", (
   expect(failed(failedStamp("abc", [request]), "abc", [])).toBeFalse();
   expect(failed(failedStamp("abc", []), "def", [])).toBeFalse();
   expect(failed(` ${failedStamp("abc", [])}`, "abc", [])).toBeFalse();
+});
+
+test("CI state treats missing CI, pending or failing checks and passes distinctly", () => {
+  const run = (status: string, conclusion: string | null = null) => ({
+    status,
+    conclusion,
+  });
+  const none = { state: "pending", total_count: 0 };
+  const cases: [
+    ReturnType<typeof run>[],
+    typeof none,
+    ReturnType<typeof ciState>,
+  ][] = [
+    [[], none, "none"],
+    [[run("in_progress")], none, "waiting"],
+    [[run("completed", "failure")], none, "waiting"],
+    [
+      [run("completed", "neutral"), run("completed", "skipped")],
+      none,
+      "passed",
+    ],
+    [[run("completed", "success")], none, "passed"],
+    [
+      [run("completed", "success")],
+      { state: "failure", total_count: 1 },
+      "waiting",
+    ],
+    [[], { state: "failure", total_count: 1 }, "waiting"],
+    [[], { state: "success", total_count: 1 }, "passed"],
+  ];
+  for (const [runs, status, state] of cases)
+    expect(ciState(runs, status)).toBe(state);
+});
+
+test("next review step follows the bot-comment stamps", () => {
+  const request: Review = {
+    id: 1,
+    state: "CHANGES_REQUESTED",
+    commit_id: "abc",
+    user: { login: "owner" },
+    body: "",
+  };
+  const cases: [Review[], string[], ReturnType<typeof nextReviewStep>][] = [
+    [[request], [], "revise"],
+    [[request], [reviewStamp("abc", true)], "revise"],
+    // An already-failed revision falls through to the remaining stamps.
+    [[request], [failedStamp("abc", [request])], "review"],
+    [
+      [request],
+      [failedStamp("abc", [request]), reviewStamp("abc", true)],
+      "merge",
+    ],
+    [[], [reviewStamp("abc", true)], "merge"],
+    [[], [reviewStamp("abc")], "skip"],
+    [[], [reviewStamp("old", true)], "review"],
+    [[], [failedStamp("abc", [])], "skip"],
+    [[], [failedStamp("old", [])], "review"],
+    [[], [], "review"],
+  ];
+  for (const [requests, comments, step] of cases)
+    expect(nextReviewStep("abc", requests, comments)).toBe(step);
 });
