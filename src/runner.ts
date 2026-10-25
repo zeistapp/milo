@@ -1,5 +1,4 @@
-import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import { runClaude } from "./claude.ts";
 import {
@@ -24,7 +23,14 @@ import {
   Review,
 } from "./github.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
-import { command, inside, keptLog, sandboxed, temporary } from "./process.ts";
+import {
+  command,
+  inside,
+  keptLog,
+  sandboxed,
+  temporary,
+  workHome,
+} from "./process.ts";
 import {
   type Installed,
   inspectProject,
@@ -66,9 +72,7 @@ Open a PR description with a short paragraph a teammate new to this code can fol
 Keep a review under 120 words, and a PR description or ticket under 200.`;
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);
-  // Beside the clone, so a run's steps share package-manager downloads and changes() never sees them.
-  const home = join(dirname(repo), "home");
-  await mkdir(home, { recursive: true });
+  const home = await workHome(root);
   for (const step of commands) await sandboxed(step, repo, home);
 }
 export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
@@ -98,6 +102,7 @@ export async function runAgent(
         output,
         await runClaude(
           root,
+          await workHome(root),
           input,
           readOnly,
           model,

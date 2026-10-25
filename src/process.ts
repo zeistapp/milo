@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Argv, Step } from "./config.ts";
 
 // Both sandboxes (untrusted steps here, the agent's shell in claude.ts) hide these.
@@ -236,6 +236,14 @@ export async function temporary<T>(
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
+}
+// Setup, checks and the agent share this home beside the clone, so what setup installs into
+// caches (package downloads, Playwright's browsers) is there for all of them, and changes()
+// never sees it. Returns a real path.
+export async function workHome(root: string): Promise<string> {
+  const home = join(dirname(await inside(root)), "home");
+  await mkdir(home, { recursive: true });
+  return home;
 }
 export async function inside(root: string, child = "."): Promise<string> {
   const base = await realpath(root);
