@@ -65,6 +65,7 @@ test("scan reports become a titled finding or nothing", () => {
     "Done.\n`Verdict: clean`",
     "**Verdict:** clean.",
     "## Verdict: clean",
+    "Verdict: clean\n\nI couldn't reach the npm registry, so I checked the lockfile.",
   ])
     expect(finding(clean)).toBeUndefined();
   expect(
