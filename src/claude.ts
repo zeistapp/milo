@@ -3,7 +3,9 @@ import { z } from "zod";
 import type { Argv } from "./config.ts";
 import {
   agentCredentials,
+  CommandError,
   command,
+  keptLog,
   sandboxEnv,
   secretDirs,
 } from "./process.ts";
@@ -24,6 +26,29 @@ const Result = z.object({
   result: z.string(),
   permission_denials: z.array(Denial).catch([]),
 });
+// Any result, successful or not, for its cost and the reason it stopped.
+const Outcome = z
+  .object({
+    subtype: z.string().catch(""),
+    result: z.string().catch(""),
+    total_cost_usd: z.number().optional().catch(undefined),
+    num_turns: z.number().optional().catch(undefined),
+  })
+  .catch({ subtype: "", result: "" });
+// Fixed labels only: Claude's error text can quote the prompt or repository.
+const reasons: [RegExp, string][] = [
+  [/credit balance/i, "API credit balance is too low"],
+  [/api key|authentication|\b401\b/i, "API key was rejected"],
+  [/usage limit|rate limit|\b429\b/i, "API rate or usage limit reached"],
+  [/overloaded|\b529\b/i, "API is overloaded"],
+  [/prompt is too long/i, "prompt is too long"],
+];
+function stopReason({ subtype, result }: z.infer<typeof Outcome>): string {
+  const label =
+    reasons.find(([pattern]) => pattern.test(result))?.[1] ??
+    (/^error_[a-z_]+$/.test(subtype) ? subtype : undefined);
+  return label ? `: ${label}` : "";
+}
 
 export function claudeCommand(
   root: string,
@@ -108,21 +133,35 @@ export async function runClaude(
   // paths must keep meaning the real home. The XDG paths match the steps', so the agent
   // finds what setup installed, such as Playwright's browsers.
   const { HOME: _, ...paths } = sandboxEnv(home);
+  // Claude exits 1 on API errors but still prints its JSON result, which says why.
+  let failure: CommandError | undefined;
   const stdout = await command(claudeCommand(root, home, readOnly, model), {
     ...options,
     input,
     // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
     env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1", ...paths },
+    logFile: keptLog("claude"),
+  }).catch((error) => {
+    if (!(error instanceof CommandError)) throw error;
+    failure = error;
+    return error.stdout;
   });
   let json: unknown;
   try {
     json = JSON.parse(stdout);
   } catch {
-    throw new Error("Claude returned invalid JSON");
+    throw failure ?? new Error("Claude returned invalid JSON");
   }
+  const outcome = Outcome.parse(json);
+  if (outcome.total_cost_usd !== undefined)
+    console.log(
+      `Claude cost $${outcome.total_cost_usd.toFixed(2)} over ${outcome.num_turns ?? "?"} turns`,
+    );
   const response = Result.safeParse(json);
-  if (!response.success)
-    throw new Error("Claude did not complete successfully");
+  if (failure || !response.success)
+    throw new Error(
+      `Claude did not complete successfully${stopReason(outcome)}`,
+    );
   const { result, permission_denials: denials } = response.data;
   if (denials.length) {
     // Report only fixed labels, never agent-supplied arguments, paths or secrets.

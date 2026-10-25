@@ -32,6 +32,15 @@ export interface CommandOptions {
   // Names the command in errors when argv[0] is a wrapper such as the sandbox.
   label?: string;
 }
+// Keeps stdout so callers can read a structured failure, such as Claude's JSON result.
+export class CommandError extends Error {
+  constructor(
+    message: string,
+    readonly stdout: string,
+  ) {
+    super(message);
+  }
+}
 export async function command(
   argv: Argv,
   options: CommandOptions = {},
@@ -118,8 +127,9 @@ export async function command(
       if (failure) reject(failure);
       else if (code !== 0)
         reject(
-          new Error(
+          new CommandError(
             `${name} failed (exit ${code}); reproduce this configured command locally`,
+            stdout.trim(),
           ),
         );
       else resolve(stdout.trim());
