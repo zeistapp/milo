@@ -20,6 +20,7 @@ const actions = [
   "runReviews",
   "work",
   "review",
+  "revise",
   "tick",
 ] as const;
 const runner = Object.fromEntries(
@@ -112,8 +113,8 @@ test("commands dispatch to the runner with parsed options", async () => {
       ["work", "--repo", "owner/a", "12", "--category", "cleanup"],
       { work: [[a, 12, "simplify"]] },
     ],
-    [["review", "--repo", "owner/a", "7"], { review: [[a, 7, false]] }],
-    [["revise", "--repo", "owner/a", "7"], { review: [[a, 7, true]] }],
+    [["review", "--repo", "owner/a", "7"], { review: [[a, 7]] }],
+    [["revise", "--repo", "owner/a", "7"], { revise: [[a, 7]] }],
     [["tick", "--repo", "owner/a"], { tick: [[a]] }],
     [
       ["reviews", "--self-repo", "owner/c", "--repo", "owner/c"],
