@@ -6,7 +6,6 @@ import {
   command,
   sandboxEnv,
   secretDirs,
-  temporary,
 } from "./process.ts";
 
 // Required CLI floor for restricted mode and fail-closed shell sandbox settings.
@@ -88,6 +87,7 @@ export function claudeCommand(
 
 export async function runClaude(
   root: string,
+  home: string,
   input: string,
   readOnly: boolean,
   model?: string,
@@ -105,15 +105,14 @@ export async function runClaude(
     throw new Error(`Claude Code ${minimumClaudeVersion}+ is required`);
   // Tools such as Wrangler write through XDG paths, which GitHub's runners point at the
   // read-only real home. HOME stays: Claude reads its config through it, and denyRead's ~
-  // paths must keep meaning the real home.
-  const stdout = await temporary("milo-claude-", (home) => {
-    const { HOME: _, ...paths } = sandboxEnv(home);
-    return command(claudeCommand(root, home, readOnly, model), {
-      ...options,
-      input,
-      // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
-      env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1", ...paths },
-    });
+  // paths must keep meaning the real home. The XDG paths match the steps', so the agent
+  // finds what setup installed, such as Playwright's browsers.
+  const { HOME: _, ...paths } = sandboxEnv(home);
+  const stdout = await command(claudeCommand(root, home, readOnly, model), {
+    ...options,
+    input,
+    // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
+    env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1", ...paths },
   });
   let json: unknown;
   try {

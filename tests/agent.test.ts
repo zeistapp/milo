@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { chmod } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
-import { sandboxEnv, temporary } from "../src/process.ts";
+import { sandboxEnv, temporary, workHome } from "../src/process.ts";
 import { runAgent } from "../src/runner.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
@@ -73,7 +72,9 @@ test("Claude reviews get a sandboxed shell but no writes; edits require a shell 
 });
 
 test("provider subprocesses forward prompts and models, save reports and reject incomplete runs", () =>
-  temporary("milo-agents-", async (root) => {
+  temporary("milo-agents-", async (folder) => {
+    const root = join(folder, "repo");
+    await mkdir(root);
     const script = `#!${process.execPath}
 const args = Bun.argv.slice(2);
 if (args.includes('--version')) { console.log(process.env.MILO_TEST_VERSION ?? '${minimumClaudeVersion} (Claude Code)'); process.exit(0); }
@@ -122,16 +123,15 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");
       expect(invocation.claudeMd).toBe("1");
-      // Compare paths, not prefixes: Milo's own step sandbox puts TMPDIR inside HOME.
-      const home = dirname(invocation.paths[1]);
+      // The agent sees the steps' home, so it finds what setup installed there.
+      const home = join(await realpath(folder), "home");
+      expect(await workHome(root)).toBe(home);
       const { HOME, ...paths } = sandboxEnv(home);
       expect(invocation.paths).toEqual(Object.values(paths));
       expect(invocation.home).toBe(process.env.HOME);
-      expect([process.env.HOME, root]).not.toContain(home);
       expect(
         JSON.parse(invocation.settings).sandbox.filesystem.allowWrite,
       ).toEqual([home]);
-      expect(existsSync(home)).toBeFalse();
       expect(invocation.args.slice(-2)).toEqual(["--model", "exact-model"]);
       await runAgent(config("claude"), root, "Scan this", true, "scan-model");
       expect(
