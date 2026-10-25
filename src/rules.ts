@@ -50,8 +50,8 @@ export const scannedNote = (key: string) => `Milo scanned ${key}`;
 export function finding(
   report: string,
 ): { title: string; body: string } | undefined {
-  // Models wrap these lines in markdown or lead with narration, so tolerate both.
-  if (/(?:^|\n)[\s>#*_`]*verdict:[\s*_`]*clean[\s*_`.]*$/i.test(report)) return;
+  // Models wrap these lines in markdown, narrate around them and put the verdict first, so tolerate all three.
+  if (/^[\s>#*_`]*verdict:[\s*_`]*clean[\s*_`.]*$/im.test(report)) return;
   const match = /^[\s>#*_]*title:[*_]*[ \t]*(\S.*)$/im.exec(report);
   if (!match?.[1])
     throw new Error("Scan report has neither a title nor a verdict");
