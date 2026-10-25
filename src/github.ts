@@ -14,6 +14,8 @@ export const Issue = z.object({
   pull_request: z.unknown().optional(),
   html_url: z.string(),
   created_at: z.string(),
+  // Null for a deleted account.
+  user: User.nullable(),
 });
 export type Issue = z.infer<typeof Issue>;
 const Ref = z.object({ ref: z.string(), sha: z.string() });
@@ -89,6 +91,27 @@ export class GitHub implements GitHubClient {
       parse(User, JSON.parse(await command(["gh", "api", "user"]))).login
     );
   }
+}
+export async function isWriter(
+  gh: GitHubClient,
+  login: string,
+): Promise<boolean> {
+  const { permission } = parse(
+    z.object({ permission: z.string() }),
+    await gh.api(`collaborators/${encodeURIComponent(login)}/permission`),
+  );
+  return ["admin", "maintain", "write"].includes(permission);
+}
+// Only the author and writers can edit an issue body, so an approved ticket from either cannot change hands.
+export async function trustedAuthor(
+  gh: GitHubClient,
+  issue: Issue,
+): Promise<boolean> {
+  if (!issue.user) return false;
+  // The permission endpoint does not cover the App's [bot] login.
+  return (
+    issue.user.login === (await gh.viewer()) || isWriter(gh, issue.user.login)
+  );
 }
 // An App installation token can't read GET /user, so the workflow passes the App's slug.
 const appLogin = () =>
