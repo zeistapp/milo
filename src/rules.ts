@@ -184,25 +184,34 @@ export async function mergeBlocker(
     "peerDependencies",
     "optionalDependencies",
   ] as const;
+  // Absent at ref: undefined. Present but invalid JSON or schema: "unreadable".
+  const dependencies = async (ref: string, path: string) => {
+    let text: string;
+    try {
+      text = await git("show", `${ref}:${path}`);
+    } catch {
+      return;
+    }
+    try {
+      const manifest = parse(Manifest, JSON.parse(text));
+      return new Map(
+        fields.flatMap((field) =>
+          Object.entries(manifest[field]).map(([name, value]) => [
+            `${field}:${name}`,
+            value,
+          ]),
+        ),
+      );
+    } catch {
+      return "unreadable" as const;
+    }
+  };
   for (const path of manifests) {
     const [before, after] = await Promise.all(
-      [from, "HEAD"].map((ref) =>
-        git("show", `${ref}:${path}`).then(
-          (text) => {
-            const manifest = parse(Manifest, JSON.parse(text));
-            return new Map(
-              fields.flatMap((field) =>
-                Object.entries(manifest[field]).map(([name, value]) => [
-                  `${field}:${name}`,
-                  value,
-                ]),
-              ),
-            );
-          },
-          () => undefined,
-        ),
-      ),
+      [from, "HEAD"].map((ref) => dependencies(ref, path)),
     );
+    if (before === "unreadable" || after === "unreadable")
+      return `${path} unreadable`;
     if (!before || !after) return `${path} added or removed`;
     for (const key of new Set([...before.keys(), ...after.keys()])) {
       const [old, next] = [before.get(key), after.get(key)];
