@@ -56,7 +56,12 @@ import {
   validateIssue,
   validatePR,
 } from "./rules.ts";
-import { type Clone, type Git, openWorkspace } from "./workspace.ts";
+import {
+  type Clone,
+  type Git,
+  openWorkspace,
+  type Workspace,
+} from "./workspace.ts";
 
 // Harness rules come last so shared guidance cannot loosen them.
 const policy = `${guidelines}
@@ -535,37 +540,59 @@ export class Runner {
       );
     }
   }
-  // Resolves true once the current head has an automated review or a pushed revision.
-  async review(repo: Repo, number: number, revise = false): Promise<boolean> {
-    const gh = this.github(repo);
+  private async pullRequest(
+    gh: GitHubClient,
+    repo: Repo,
+    number: number,
+  ): Promise<PullRequest> {
     const pr = parse(PullRequest, await gh.api(`pulls/${number}`));
     validatePR(pr, repo);
+    return pr;
+  }
+  // Runs fn on a clone checked out at pr.head.sha. assertHeadCurrent re-reads the PR and
+  // throws if its head moved, so fn calls it before publishing anything about that commit.
+  private async withPullRequestCheckout<T>(
+    gh: GitHubClient,
+    repo: Repo,
+    pr: PullRequest,
+    fn: (
+      checkout: Workspace & {
+        root: string;
+        assertHeadCurrent: (during: string) => Promise<void>;
+      },
+    ) => Promise<T>,
+  ): Promise<T> {
+    return temporary("milo-review-", async (folder) => {
+      const root = join(folder, "repo");
+      const workspace = await openWorkspace(repo, root, this.cloneRepo);
+      await workspace.git("fetch", "origin", `refs/pull/${pr.number}/head`);
+      await workspace.git("checkout", "--detach", "FETCH_HEAD");
+      if ((await workspace.git("rev-parse", "HEAD")) !== pr.head.sha)
+        throw new Error("PR changed during checkout; retry");
+      const assertHeadCurrent = async (during: string) => {
+        const current = await this.pullRequest(gh, repo, pr.number);
+        if (current.head.sha !== pr.head.sha)
+          throw new Error(`PR changed during ${during}; retry`);
+      };
+      return fn({ ...workspace, root, assertHeadCurrent });
+    });
+  }
+  async review(repo: Repo, number: number): Promise<void> {
+    const gh = this.github(repo);
+    const pr = await this.pullRequest(gh, repo, number);
     if (
-      !revise &&
       (await this.botComments(gh, pr)).some((body) =>
         reviewed(body, pr.head.sha),
       )
     ) {
       console.log("This commit already has an automated review");
-      return true;
+      return;
     }
-    const requests = revise ? await this.requests(gh, number, pr.head.sha) : [];
-    if (revise && !requests.length) {
-      console.log("No current changes requested by a repository writer");
-      return false;
-    }
-    return temporary("milo-review-", async (folder) => {
-      const root = join(folder, "repo");
-      const { git, changes, assertUnchanged } = await openWorkspace(
-        repo,
-        root,
-        this.cloneRepo,
-      );
-      await git("fetch", "origin", `refs/pull/${number}/head`);
-      await git("checkout", "--detach", "FETCH_HEAD");
-      if ((await git("rev-parse", "HEAD")) !== pr.head.sha)
-        throw new Error("PR changed during checkout; retry");
-      if (!revise) {
+    await this.withPullRequestCheckout(
+      gh,
+      repo,
+      pr,
+      async ({ root, git, assertUnchanged, assertHeadCurrent }) => {
         const project = await inspectProject(root, repo);
         const diff = await git(
           "diff",
@@ -594,10 +621,7 @@ export class Runner {
             diff,
           true,
         );
-        const current = parse(PullRequest, await gh.api(`pulls/${number}`));
-        validatePR(current, repo);
-        if (current.head.sha !== pr.head.sha)
-          throw new Error("PR changed during review; retry");
+        await assertHeadCurrent("review");
         await assertUnchanged();
         let merge = false;
         let note = "";
@@ -617,56 +641,67 @@ export class Runner {
           number,
           `${reviewStamp(pr.head.sha, merge)}\n\nAutomated review (advisory):\n\n${report}${note}`,
         );
+      },
+    );
+  }
+  // Resolves false when there is nothing to revise or the agent produced no change.
+  async revise(repo: Repo, number: number): Promise<boolean> {
+    const gh = this.github(repo);
+    const pr = await this.pullRequest(gh, repo, number);
+    const requests = await this.requests(gh, number, pr.head.sha);
+    if (!requests.length) {
+      console.log("No current changes requested by a repository writer");
+      return false;
+    }
+    return this.withPullRequestCheckout(
+      gh,
+      repo,
+      pr,
+      async ({ root, git, changes, assertHeadCurrent }) => {
+        const baseline = await this.prepare(repo, root);
+        const ids = new Set(requests.map((review) => review.id));
+        const inline = parse(
+          z.array(Comment),
+          await gh.pages(`pulls/${number}/comments`),
+        ).filter((comment) => ids.has(comment.pull_request_review_id ?? -1));
+        const report = await runAgent(
+          this.config,
+          root,
+          "Address these review requests without expanding scope:\n" +
+            JSON.stringify({ reviews: requests, inlineComments: inline }) +
+            "\n" +
+            projectContext(baseline),
+        );
+        const project = await this.checkedChanges(
+          repo,
+          root,
+          git,
+          pr.head.sha,
+          baseline,
+        );
+        if (!(await changes())) {
+          console.log(
+            "No revision produced; the PR still needs human attention",
+          );
+          return false;
+        }
+        await assertHeadCurrent("revision");
+        if (!(await this.requests(gh, number, pr.head.sha)).length)
+          throw new Error("Review request withdrawn; retry");
+        await git("commit", "-m", `Address review for PR #${number}`);
+        await git(
+          "push",
+          `--force-with-lease=refs/heads/${pr.head.ref}:${pr.head.sha}`,
+          "origin",
+          `HEAD:refs/heads/${pr.head.ref}`,
+        );
+        await gh.comment(
+          number,
+          `Review requests addressed.\n\n${report}${this.checkReport(project)}`,
+        );
         return true;
-      }
-      const baseline = await this.prepare(repo, root);
-      const ids = new Set(requests.map((review) => review.id));
-      const inline = parse(
-        z.array(Comment),
-        await gh.pages(`pulls/${number}/comments`),
-      ).filter((comment) => ids.has(comment.pull_request_review_id ?? -1));
-      const report = await runAgent(
-        this.config,
-        root,
-        "Address these review requests without expanding scope:\n" +
-          JSON.stringify({ reviews: requests, inlineComments: inline }) +
-          "\n" +
-          projectContext(baseline),
-      );
-      const project = await this.checkedChanges(
-        repo,
-        root,
-        git,
-        pr.head.sha,
-        baseline,
-      );
-      if (!(await changes())) {
-        console.log("No revision produced; the PR still needs human attention");
-        return false;
-      }
-      const current = parse(PullRequest, await gh.api(`pulls/${number}`));
-      validatePR(current, repo);
-      if (current.head.sha !== pr.head.sha)
-        throw new Error("PR changed during revision; retry");
-      if (
-        !(await this.requests(gh, number, pr.head.sha).then(
-          (requests) => requests.length,
-        ))
-      )
-        throw new Error("Review request withdrawn; retry");
-      await git("commit", "-m", `Address review for PR #${number}`);
-      await git(
-        "push",
-        `--force-with-lease=refs/heads/${pr.head.ref}:${pr.head.sha}`,
-        "origin",
-        `HEAD:refs/heads/${pr.head.ref}`,
-      );
-      await gh.comment(
-        number,
-        `Review requests addressed.\n\n${report}${this.checkReport(project)}`,
-      );
-      return true;
-    });
+      },
+    );
   }
   // Marks a scheduled attempt that leaves nothing on the head, so runReviews moves past it until the head or requests change.
   private async attempt(
@@ -743,9 +778,14 @@ export class Runner {
       );
       if (step === "merge") await this.merge(gh, repo, pr);
       if (step === "merge" || step === "skip") continue;
-      await this.attempt(gh, pr, step === "revise" ? requests : [], () =>
-        this.review(repo, pr.number, step === "revise"),
-      );
+      if (step === "revise")
+        await this.attempt(gh, pr, requests, () =>
+          this.revise(repo, pr.number),
+        );
+      else
+        await this.attempt(gh, pr, [], () =>
+          this.review(repo, pr.number).then(() => true),
+        );
       break;
     }
   }

@@ -135,8 +135,8 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       else if (action === "reviews") await runner.runReviews(repo);
       else if (action === "work")
         await runner.work(repo, Number(target), category);
-      else if (action === "review" || action === "revise")
-        await runner.review(repo, Number(target), action === "revise");
+      else if (action === "review") await runner.review(repo, Number(target));
+      else if (action === "revise") await runner.revise(repo, Number(target));
       else await runner.tick(repo);
     } catch (error) {
       failures.push(repo.name);

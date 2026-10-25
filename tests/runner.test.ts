@@ -18,7 +18,7 @@ import {
   sandboxed,
   temporary,
 } from "../src/process.ts";
-import { periodKey } from "../src/rules.ts";
+import { periodKey, reviewStamp } from "../src/rules.ts";
 import { Runner } from "../src/runner.ts";
 
 function issue(body = "", state = "open"): Issue {
@@ -511,12 +511,12 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
         user: { login: "owner" },
         body: "Improve fix",
       });
-      await runner.review(repo, 34, true);
+      await runner.revise(repo, 34);
       expect(await git(remote, "show", "milo/issue-12:file.txt")).toBe(
         "reviewed",
       );
       const revisedHead = await head();
-      await runner.review(repo, 34, true);
+      await runner.revise(repo, 34);
       expect(await head()).toBe(revisedHead);
       const calls = await Bun.file(invocations).text();
       prs.length = 0;
@@ -541,6 +541,119 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
     }),
   15_000,
 );
+
+test("review and revise publish nothing when the PR head moves", () =>
+  temporary("milo-stale-", async (folder) => {
+    const git = (root: string, ...args: string[]) =>
+      command(["git", ...args], { cwd: root });
+    const source = join(folder, "source");
+    const remote = join(folder, "remote.git");
+    await mkdir(source);
+    await git(source, "init", "-q", "-b", "main");
+    await git(source, "config", "user.name", "Test");
+    await git(source, "config", "user.email", "test@example.test");
+    await Bun.write(join(source, "file.txt"), "old\n");
+    await git(source, "add", ".");
+    await git(source, "commit", "-qm", "Initial");
+    const base = await git(source, "rev-parse", "HEAD");
+    await Bun.write(join(source, "file.txt"), "new\n");
+    await git(source, "commit", "-qam", "Change");
+    const sha = await git(source, "rev-parse", "HEAD");
+    await git(source, "clone", "-q", "--bare", source, remote);
+    await git(remote, "update-ref", "refs/heads/milo/issue-34", sha);
+    await git(remote, "update-ref", "refs/pull/34/head", sha);
+    const fakeAgent = join(folder, "agent.ts");
+    const runs = join(folder, "runs.txt");
+    await Bun.write(
+      fakeAgent,
+      `import { appendFileSync } from "node:fs";
+const prompt = await Bun.stdin.text();
+appendFileSync(${JSON.stringify(runs)}, "x");
+if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "revised\\n");
+await Bun.write(Bun.argv[2]!, "Report");`,
+    );
+    // Each read of the PR takes the next head; the last one repeats.
+    let heads: string[] = [];
+    const comments: string[] = [];
+    const gh: GitHubClient = {
+      async api<T>(endpoint: string): Promise<T> {
+        if (endpoint === "pulls/34")
+          return {
+            number: 34,
+            state: "open",
+            body: "",
+            html_url: "https://example.test/pr/34",
+            head: {
+              ref: "milo/issue-34",
+              sha: heads.length > 1 ? heads.shift() : heads[0],
+              repo: { full_name: "owner/repo" },
+            },
+            base: { ref: "main", sha: base },
+          } as T;
+        if (endpoint === "issues/34") return issue() as T;
+        if (endpoint === "collaborators/owner/permission")
+          return { permission: "admin" } as T;
+        throw new Error(`Unexpected endpoint: ${endpoint}`);
+      },
+      async pages<T>(endpoint: string): Promise<T[]> {
+        if (endpoint === "pulls/34/reviews")
+          return [
+            {
+              id: 1,
+              state: "CHANGES_REQUESTED",
+              commit_id: sha,
+              user: { login: "owner" },
+              body: "Fix",
+            },
+          ] as T[];
+        return [];
+      },
+      async comment(_number, body) {
+        comments.push(body);
+      },
+      async viewer() {
+        return "milo";
+      },
+    };
+    const runner = new Runner(
+      {
+        agent: { command: [process.execPath, fakeAgent, "{output}"] },
+        repos: [],
+      },
+      () => gh,
+      async (_repo, root) => {
+        await git(folder, "clone", "-q", remote, root);
+        await git(root, "config", "user.name", "Test");
+        await git(root, "config", "user.email", "test@example.test");
+      },
+    );
+    const repo: Repo = {
+      name: "owner/repo",
+      setup: [],
+      checks: [{ command: ["true"] }],
+    };
+    const moved = "0".repeat(40);
+    // A head that moved before checkout stops the run before the agent starts.
+    heads = [moved];
+    await expect(runner.review(repo, 34)).rejects.toThrow(
+      "PR changed during checkout",
+    );
+    expect(existsSync(runs)).toBeFalse();
+    // A head that moved while the agent ran stops the run before it publishes.
+    heads = [sha, moved];
+    await expect(runner.review(repo, 34)).rejects.toThrow(
+      "PR changed during review",
+    );
+    heads = [sha, moved];
+    await expect(runner.revise(repo, 34)).rejects.toThrow(
+      "PR changed during revision",
+    );
+    expect(await Bun.file(runs).text()).toBe("xx");
+    expect(comments).toEqual([]);
+    expect(await git(remote, "rev-parse", "refs/heads/milo/issue-34")).toBe(
+      sha,
+    );
+  }));
 
 test("auto-merge waits for CI, refreshes stale branches and respects change requests", async () => {
   const repo: Repo = {
@@ -717,8 +830,17 @@ test("a failed or empty review attempt does not block later PRs", async () => {
   const calls: [number, boolean][] = [];
   let outcome: () => Promise<boolean> = async () => false;
   const review = spyOn(runner, "review").mockImplementation(
-    async (_repo, number, revise = false) => {
-      calls.push([number, revise]);
+    async (_repo, number) => {
+      calls.push([number, false]);
+      await outcome();
+      // A completed review stamps the head, as the real one does.
+      const sha = open.find((item) => item.number === number)?.head.sha ?? "";
+      await gh.comment(number, reviewStamp(sha));
+    },
+  );
+  const revise = spyOn(runner, "revise").mockImplementation(
+    async (_repo, number) => {
+      calls.push([number, true]);
       return outcome();
     },
   );
@@ -763,9 +885,10 @@ test("a failed or empty review attempt does not block later PRs", async () => {
       [35, false],
       [34, false],
     ]);
-    expect(comments[34]?.at(-1)?.body).toStartWith("<!-- milo:failed:c: -->");
+    expect(comments[34]?.at(-2)?.body).toStartWith("<!-- milo:failed:c: -->");
   } finally {
     review.mockRestore();
+    revise.mockRestore();
   }
 });
 
@@ -805,8 +928,13 @@ test("null users and commits on GitHub entries do not stop reviews", async () =>
   );
   const calls: [number, boolean][] = [];
   const review = spyOn(runner, "review").mockImplementation(
-    async (_repo, number, revise = false) => {
-      calls.push([number, revise]);
+    async (_repo, number) => {
+      calls.push([number, false]);
+    },
+  );
+  const revise = spyOn(runner, "revise").mockImplementation(
+    async (_repo, number) => {
+      calls.push([number, true]);
       return true;
     },
   );
@@ -815,6 +943,7 @@ test("null users and commits on GitHub entries do not stop reviews", async () =>
     expect(calls).toEqual([[34, false]]);
   } finally {
     review.mockRestore();
+    revise.mockRestore();
   }
 });
 
