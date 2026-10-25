@@ -158,6 +158,15 @@ test("auto-merge blocks majors, dependency changes and large diffs", () =>
       await commit();
       expect(await mergeBlocker(git, base)).toContain(reason);
     }
+    for (const text of ["{", '{"dependencies":[]}']) {
+      await git("checkout", "-q", "--detach", base);
+      await Bun.write(join(root, "package.json"), text);
+      const broken = await commit();
+      expect(await mergeBlocker(git, base)).toBe("package.json unreadable");
+      await manifest({ hono: "^4.1.0", tiny: "0.3.1", exact: "1.0.1" });
+      await commit();
+      expect(await mergeBlocker(git, broken)).toBe("package.json unreadable");
+    }
     await git("checkout", "-q", "--detach", base);
     await Bun.write(join(root, "big.ts"), "x\n".repeat(300));
     await commit();
