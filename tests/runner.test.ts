@@ -30,6 +30,7 @@ function issue(body = "", state = "open"): Issue {
     html_url: "https://example.test/issue/12",
     created_at: "2026-10-15T09:00:00Z",
     labels: [{ name: "milo:task" }, { name: "milo:ready" }],
+    user: { login: "milo" },
   };
 }
 test("scans open one finding per category and period, and skip clean or outstanding ones", () =>
@@ -152,6 +153,63 @@ test("malformed GitHub responses fail before Milo acts on them", async () => {
   await expect(runner.work({ name: "owner/repo" }, 12)).rejects.toThrow(
     "at labels",
   );
+});
+test("only tickets written by Milo or a repository writer run", async () => {
+  const permissions: Record<string, string> = {
+    owner: "write",
+    stranger: "read",
+  };
+  const tickets = [
+    { ...issue(), number: 1, user: { login: "stranger" } },
+    { ...issue(), number: 2, user: null },
+    { ...issue(), number: 3, user: { login: "owner" } },
+    { ...issue(), number: 4 },
+  ];
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string): Promise<T> {
+      const login = /^collaborators\/(.+)\/permission$/.exec(endpoint)?.[1];
+      if (login) return { permission: permissions[login] } as T;
+      const ticket = tickets.find(
+        (item) => endpoint === `issues/${item.number}`,
+      );
+      if (ticket) return ticket as T;
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      return (endpoint.startsWith("issues?") ? tickets : []) as T[];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+    async () => {
+      throw new Error("Unexpected clone");
+    },
+  );
+  const repo = { name: "owner/repo" };
+  for (const number of [1, 2])
+    await expect(runner.work(repo, number)).rejects.toThrow(
+      "Ticket must be written by Milo or a repository writer",
+    );
+  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const work = spyOn(runner, "work").mockResolvedValue(undefined);
+  try {
+    await runner.runTasks(repo);
+    expect(work).toHaveBeenCalledWith(repo, 3, undefined);
+    tickets.splice(2, 1);
+    await runner.runTasks(repo);
+    expect(work).toHaveBeenLastCalledWith(repo, 4, undefined);
+    expect(work).toHaveBeenCalledTimes(2);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
 });
 test("child processes lose GitHub credentials and time out", async () => {
   const github = [
@@ -458,10 +516,10 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
           return result as T[];
         },
         async comment(_number, body) {
-          comments.push({ body, user: { login: "milo-bot" } });
+          comments.push({ body, user: { login: "milo" } });
         },
         async viewer() {
-          return "milo-bot";
+          return "milo";
         },
       };
       const runner = new Runner(
@@ -692,6 +750,7 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
         "commits/abc/check-runs?per_page=100": { check_runs: runs },
         "commits/abc/status": status,
         "compare/main...abc": { behind_by: behind },
+        "collaborators/stranger/permission": { permission: "triage" },
       };
       return (responses[endpoint] ?? {}) as T;
     },
@@ -755,6 +814,10 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   // The author can edit the body, so a body marker alone does not enable auto-merge.
   const labelled = ticket;
   ticket = issue("<!-- milo:dependencies:key -->");
+  await runner.runReviews(repo);
+  expect(writes).toHaveLength(1);
+  // A stranger's ticket cannot buy a merge with a triager's approval.
+  ticket = { ...labelled, user: { login: "stranger" } };
   await runner.runReviews(repo);
   expect(writes).toHaveLength(1);
   ticket = labelled;

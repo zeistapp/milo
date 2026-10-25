@@ -18,9 +18,11 @@ import {
   GitHub,
   type GitHubClient,
   Issue,
+  isWriter,
   Link,
   PullRequest,
   Review,
+  trustedAuthor,
 } from "./github.ts";
 import guidelines from "./guidelines.txt" with { type: "text" };
 import {
@@ -299,6 +301,8 @@ export class Runner {
     const gh = this.github(repo);
     const issue = parse(Issue, await gh.api(`issues/${number}`));
     validateIssue(issue);
+    if (!(await trustedAuthor(gh, issue)))
+      throw new Error("Ticket must be written by Milo or a repository writer");
     if (category && issueCategory(issue) !== category)
       throw new Error("Ticket belongs to another task runner");
     // The agent works from this exact text, so an edit mid-run needs a fresh run.
@@ -433,14 +437,7 @@ export class Runner {
       sha,
     )) {
       // A writer's permission cannot be checked without a login.
-      if (!review.user) continue;
-      const { permission } = parse(
-        z.object({ permission: z.string() }),
-        await gh.api(
-          `collaborators/${encodeURIComponent(review.user.login)}/permission`,
-        ),
-      );
-      if (["admin", "maintain", "write"].includes(permission))
+      if (review.user && (await isWriter(gh, review.user.login)))
         requests.push(review);
     }
     return requests;
@@ -470,8 +467,11 @@ export class Runner {
     pr: PullRequest,
   ): Promise<Category | undefined> {
     if (!repo.autoMerge?.length) return;
-    const category = issueCategory(await this.ticket(gh, pr));
-    return category && repo.autoMerge?.includes(category)
+    const ticket = await this.ticket(gh, pr);
+    const category = issueCategory(ticket);
+    return category &&
+      repo.autoMerge.includes(category) &&
+      (await trustedAuthor(gh, ticket))
       ? category
       : undefined;
   }
@@ -744,6 +744,7 @@ export class Runner {
         continue;
       }
       if (category && issueCategory(issue) !== category) continue;
+      if (!(await trustedAuthor(gh, issue))) continue;
       const branch = `milo/issue-${issue.number}`;
       if (
         (
