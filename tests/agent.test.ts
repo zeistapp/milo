@@ -83,6 +83,7 @@ await Bun.write('invocation.json', JSON.stringify({args,input,github:process.env
 if (args[0] === 'exec') await Bun.write(args[args.indexOf('--output-last-message')+1], 'Custom report');
 else if (process.env.MILO_TEST_RESULT === 'exit') process.exit(1);
 else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Claude report'}));
+process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
 `;
     for (const name of ["claude", "agent"]) {
       const path = join(root, name);
@@ -95,6 +96,7 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       "ANTHROPIC_API_KEY",
       "MILO_TEST_VERSION",
       "MILO_TEST_RESULT",
+      "MILO_TEST_EXIT",
     ];
     const previous = Object.fromEntries(
       keys.map((key) => [key, process.env[key]]),
@@ -235,6 +237,26 @@ else console.log(process.env.MILO_TEST_RESULT ?? JSON.stringify({type:'result',s
       await expect(
         runAgent(config("claude"), root, "test"),
       ).rejects.not.toThrow("PRIVATE_DONT_LOG");
+      // An API error exits 1 with a JSON result; report a fixed label, not Claude's text.
+      process.env.MILO_TEST_EXIT = "1";
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "Credit balance is too low PRIVATE_DONT_LOG",
+        total_cost_usd: 0,
+      });
+      const failure = runAgent(config("claude"), root, "test");
+      await expect(failure).rejects.toThrow("API credit balance is too low");
+      await expect(failure).rejects.not.toThrow("PRIVATE_DONT_LOG");
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+      });
+      await expect(runAgent(config("claude"), root, "test")).rejects.toThrow(
+        "did not complete successfully: error_max_turns",
+      );
     } finally {
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
