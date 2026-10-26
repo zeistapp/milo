@@ -713,7 +713,8 @@ await Bun.write(Bun.argv[2]!, "Report");`,
     );
   }));
 
-test("auto-merge waits for CI, refreshes stale branches and respects change requests", async () => {
+// Policy lives in mergeAction and mergeFacts (tests/rules.test.ts); this checks Runner's wiring.
+test("auto-merge gates on the ticket, then merges, updates or logs without stopping later PRs", async () => {
   const repo: Repo = {
     name: "owner/repo",
     categories: ["dependencies"],
@@ -732,26 +733,20 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     base: { ref: "main", sha: "base" },
   };
   let runs = [{ status: "in_progress", conclusion: null as string | null }];
-  const status = { state: "pending", total_count: 0 };
   let behind = 0;
-  let conflict = false;
+  let refused = false;
   let open = [pr];
-  let reviews: Review[] = [];
-  let comment = "<!-- milo:review:abc --><!-- milo:merge -->\n\nreport";
   let ticket = { ...issue(), labels: [{ name: "milo:dependencies" }] };
   const writes: string[] = [];
   const gh: GitHubClient = {
     async api<T>(endpoint: string, method = "GET"): Promise<T> {
-      if (method !== "GET") writes.push(endpoint);
-      if (conflict && endpoint === "pulls/34/update-branch")
-        throw new Error("gh api: 422 merge conflict");
+      if (method !== "GET") {
+        writes.push(endpoint);
+        if (refused) throw new Error("gh api: 405 not allowed");
+      }
       const responses: Record<string, unknown> = {
         "issues/12": ticket,
-        // Unpaginated, GitHub returns only the first 100 check runs.
-        "commits/abc/check-runs?per_page=100": {
-          check_runs: runs.slice(0, 100),
-        },
-        "commits/abc/status": status,
+        "commits/abc/status": { state: "pending", total_count: 0 },
         "compare/main...abc": { behind_by: behind },
         "collaborators/stranger/permission": { permission: "triage" },
       };
@@ -760,9 +755,9 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     async pages<T>(endpoint: string, key?: string): Promise<T[]> {
       if (endpoint === "commits/abc/check-runs" && key === "check_runs")
         return runs as T[];
+      const comment = "<!-- milo:review:abc --><!-- milo:merge -->";
       const responses: Record<string, unknown[]> = {
         "pulls?state=open": open,
-        "pulls/34/reviews": reviews,
         "issues/34/comments": [{ body: comment, user: { login: "milo" } }],
         "issues/35/comments": [{ body: comment, user: { login: "milo" } }],
       };
@@ -777,10 +772,10 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
   );
-  const logged = async () => {
+  const logged = async (target = repo) => {
     const log = spyOn(console, "log").mockImplementation(() => {});
     try {
-      await runner.runReviews(repo);
+      await runner.runReviews(target);
       return log.mock.calls.map(([line]) => line);
     } finally {
       log.mockRestore();
@@ -793,62 +788,38 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   expect(await logged()).toEqual([
     "https://example.test/pr/34: no CI checks; auto-merge needs PR CI",
   ]);
-  expect(writes).toEqual([]);
   runs = [{ status: "completed", conclusion: "success" }];
-  behind = 2;
-  await runner.runReviews(repo);
-  expect(writes).toEqual(["pulls/34/update-branch"]);
-  behind = 0;
-  reviews = [
-    {
-      id: 1,
-      state: "CHANGES_REQUESTED",
-      commit_id: "old",
-      user: { login: "owner" },
-      body: "",
-    },
-  ];
-  await runner.runReviews(repo);
-  expect(writes).toHaveLength(1);
-  reviews = [{ ...reviews[0], user: null, commit_id: null } as Review];
-  await runner.runReviews(repo);
-  expect(writes).toHaveLength(1);
-  reviews = [];
-  await runner.runReviews({ ...repo, autoMerge: [] });
-  expect(writes).toHaveLength(1);
-  // The author can edit the body, so a body marker alone does not enable auto-merge.
+  // Only a labelled category the repo allows, on a trusted author's ticket, merges.
+  expect(await logged({ ...repo, autoMerge: [] })).toEqual([]);
   const labelled = ticket;
   ticket = issue("<!-- milo:dependencies:key -->");
-  await runner.runReviews(repo);
-  expect(writes).toHaveLength(1);
-  // A stranger's ticket cannot buy a merge with a triager's approval.
+  expect(await logged()).toEqual([]);
   ticket = { ...labelled, user: { login: "stranger" } };
-  await runner.runReviews(repo);
-  expect(writes).toHaveLength(1);
+  expect(await logged()).toEqual([]);
   ticket = labelled;
-  comment = "<!-- milo:review:abc -->\n\n<!-- milo:merge -->";
-  await runner.runReviews(repo);
-  expect(writes).toHaveLength(1);
-  comment = "<!-- milo:review:abc --><!-- milo:merge -->";
-  // A failing check run past the first page of 100 still blocks the merge.
-  const passed = { status: "completed", conclusion: "success" };
-  runs = [...Array(100).fill(passed), { ...passed, conclusion: "failure" }];
-  expect(await logged()).toEqual([
-    "https://example.test/pr/34: waiting for passing CI",
-  ]);
-  expect(writes).toHaveLength(1);
-  runs = Array(101).fill(passed);
-  await runner.runReviews(repo);
-  expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
-  // A conflicted branch update is logged and skipped, so later PRs still run.
-  writes.length = 0;
-  conflict = true;
+  expect(writes).toEqual([]);
   behind = 2;
+  expect(await logged()).toEqual([
+    "https://example.test/pr/34: updated from main",
+  ]);
+  behind = 0;
+  expect(await logged()).toEqual(["Merged https://example.test/pr/34"]);
+  expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
+  // A refused write is logged and skipped, so later PRs still run.
+  writes.length = 0;
+  refused = true;
   open = [pr, { ...pr, number: 35, html_url: "https://example.test/pr/35" }];
+  behind = 2;
   expect(await logged()).toContain(
     "https://example.test/pr/34: branch update refused; resolve conflicts with main",
   );
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
+  writes.length = 0;
+  behind = 0;
+  expect(await logged()).toContain(
+    "https://example.test/pr/34: merge refused; check branch rules and allowed merge methods",
+  );
+  expect(writes).toEqual(["pulls/34/merge", "pulls/35/merge"]);
 });
 
 test("a failed or empty review attempt does not block later PRs", async () => {

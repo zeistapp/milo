@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   Category,
   categoryNames,
@@ -6,7 +7,12 @@ import {
   type Repo,
   retiredCategories,
 } from "./config.ts";
-import type { Issue, PullRequest, Review } from "./github.ts";
+import {
+  type GitHubClient,
+  type Issue,
+  type PullRequest,
+  Review,
+} from "./github.ts";
 import { Manifest } from "./project.ts";
 import type { Git } from "./workspace.ts";
 
@@ -123,6 +129,65 @@ export function ciState(
     (status.total_count && status.state !== "success")
     ? "waiting"
     : "passed";
+}
+export type MergeFacts = {
+  outstandingRequests: number;
+  ci: ReturnType<typeof ciState>;
+  behindBy: number;
+};
+// Reads what mergeAction needs about an auto-merge-eligible PR's head commit.
+export async function mergeFacts(
+  gh: GitHubClient,
+  pr: PullRequest,
+): Promise<MergeFacts> {
+  const [reviews, runs, status, compare] = await Promise.all([
+    gh.pages(`pulls/${pr.number}/reviews`),
+    // Every page: a failing run past the first 100 must still block the merge.
+    gh.pages(`commits/${pr.head.sha}/check-runs`, "check_runs"),
+    gh.api(`commits/${pr.head.sha}/status`),
+    gh.api(`compare/${pr.base.ref}...${pr.head.sha}`),
+  ]);
+  return {
+    outstandingRequests: latestRequests(parse(z.array(Review), reviews)).length,
+    ci: ciState(
+      parse(
+        z.array(
+          z.object({ status: z.string(), conclusion: z.string().nullable() }),
+        ),
+        runs,
+      ),
+      parse(z.object({ state: z.string(), total_count: z.number() }), status),
+    ),
+    behindBy: parse(z.object({ behind_by: z.number() }), compare).behind_by,
+  };
+}
+export type MergeAction = {
+  kind: "skip" | "waiting" | "no-ci" | "update-branch" | "merge";
+};
+// Merges only once CI on the head passed and the branch includes its base.
+export function mergeAction(facts: MergeFacts): MergeAction {
+  if (facts.outstandingRequests) return { kind: "skip" };
+  if (facts.ci === "none") return { kind: "no-ci" };
+  if (facts.ci === "waiting") return { kind: "waiting" };
+  return { kind: facts.behindBy ? "update-branch" : "merge" };
+}
+// Queues an auto-merge only on a merge verdict that no deterministic limit blocks.
+export async function reviewVerdict(
+  report: string,
+  blocker: () => Promise<string | undefined>,
+): Promise<{ queued: boolean; note: string }> {
+  const held = /(?:^|\n)\s*verdict:\s*merge\s*$/i.test(report)
+    ? await blocker()
+    : "review verdict";
+  return held
+    ? {
+        queued: false,
+        note: `\n\nAuto-merge held (${held}); a human must review this PR.`,
+      }
+    : {
+        queued: true,
+        note: "\n\nAuto-merge queued: Milo merges this commit after its CI passes.",
+      };
 }
 // Picks what a scheduled run does with an open Milo PR from its bot-comment stamps.
 export function nextReviewStep(

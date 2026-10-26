@@ -42,17 +42,19 @@ import {
   projectContext,
 } from "./project.ts";
 import {
-  ciState,
   failedStamp,
   finding,
   issueCategory,
   labels,
   latestRequests,
+  mergeAction,
   mergeBlocker,
+  mergeFacts,
   nextReviewStep,
   periodKey,
   reviewed,
   reviewStamp,
+  reviewVerdict,
   scannedNote,
   ticketStamp,
   validateIssue,
@@ -489,61 +491,42 @@ export class Runner {
     pr: PullRequest,
   ): Promise<void> {
     if (!(await this.autoMergeCategory(gh, repo, pr))) return;
-    if (
-      latestRequests(
-        parse(z.array(Review), await gh.pages(`pulls/${pr.number}/reviews`)),
-      ).length
-    )
-      return;
-    // Every page: a failing run past the first 100 must still block the merge.
-    const runs = parse(
-      z.array(
-        z.object({ status: z.string(), conclusion: z.string().nullable() }),
-      ),
-      await gh.pages(`commits/${pr.head.sha}/check-runs`, "check_runs"),
-    );
-    const status = parse(
-      z.object({ state: z.string(), total_count: z.number() }),
-      await gh.api(`commits/${pr.head.sha}/status`),
-    );
-    const ci = ciState(runs, status);
-    if (ci === "none") {
-      console.log(`${pr.html_url}: no CI checks; auto-merge needs PR CI`);
-      return;
-    }
-    if (ci === "waiting") {
-      console.log(`${pr.html_url}: waiting for passing CI`);
-      return;
-    }
-    const { behind_by } = parse(
-      z.object({ behind_by: z.number() }),
-      await gh.api(`compare/${pr.base.ref}...${pr.head.sha}`),
-    );
-    if (behind_by) {
-      // The new head is reviewed and checked again before a later run merges it.
-      try {
-        await gh.api(`pulls/${pr.number}/update-branch`, "PUT", {
-          expected_head_sha: pr.head.sha,
-        });
-        console.log(`${pr.html_url}: updated from ${pr.base.ref}`);
-      } catch {
-        // A conflicted PR must not stop later PRs in runReviews.
-        console.log(
-          `${pr.html_url}: branch update refused; resolve conflicts with ${pr.base.ref}`,
-        );
-      }
-      return;
-    }
-    try {
-      await gh.api(`pulls/${pr.number}/merge`, "PUT", {
-        sha: pr.head.sha,
-        merge_method: "squash",
-      });
-      console.log(`Merged ${pr.html_url}`);
-    } catch {
-      console.log(
-        `${pr.html_url}: merge refused; check branch rules and allowed merge methods`,
-      );
+    const action = mergeAction(await mergeFacts(gh, pr));
+    switch (action.kind) {
+      case "skip":
+        return;
+      case "no-ci":
+        console.log(`${pr.html_url}: no CI checks; auto-merge needs PR CI`);
+        return;
+      case "waiting":
+        console.log(`${pr.html_url}: waiting for passing CI`);
+        return;
+      case "update-branch":
+        // The new head is reviewed and checked again before a later run merges it.
+        try {
+          await gh.api(`pulls/${pr.number}/update-branch`, "PUT", {
+            expected_head_sha: pr.head.sha,
+          });
+          console.log(`${pr.html_url}: updated from ${pr.base.ref}`);
+        } catch {
+          // A conflicted PR must not stop later PRs in runReviews.
+          console.log(
+            `${pr.html_url}: branch update refused; resolve conflicts with ${pr.base.ref}`,
+          );
+        }
+        return;
+      case "merge":
+        try {
+          await gh.api(`pulls/${pr.number}/merge`, "PUT", {
+            sha: pr.head.sha,
+            merge_method: "squash",
+          });
+          console.log(`Merged ${pr.html_url}`);
+        } catch {
+          console.log(
+            `${pr.html_url}: merge refused; check branch rules and allowed merge methods`,
+          );
+        }
     }
   }
   private async pullRequest(
@@ -629,23 +612,12 @@ export class Runner {
         );
         await assertHeadCurrent("review");
         await assertUnchanged();
-        let merge = false;
-        let note = "";
-        if (await this.autoMergeCategory(gh, repo, pr)) {
-          const blocker = /(?:^|\n)\s*verdict:\s*merge\s*$/i.test(report)
-            ? await mergeBlocker(git, pr.base.sha)
-            : "review verdict";
-          if (blocker)
-            note = `\n\nAuto-merge held (${blocker}); a human must review this PR.`;
-          else {
-            merge = true;
-            note =
-              "\n\nAuto-merge queued: Milo merges this commit after its CI passes.";
-          }
-        }
+        const { queued, note } = (await this.autoMergeCategory(gh, repo, pr))
+          ? await reviewVerdict(report, () => mergeBlocker(git, pr.base.sha))
+          : { queued: false, note: "" };
         await gh.comment(
           number,
-          `${reviewStamp(pr.head.sha, merge)}\n\nAutomated review (advisory):\n\n${report}${note}`,
+          `${reviewStamp(pr.head.sha, queued)}\n\nAutomated review (advisory):\n\n${report}${note}`,
         );
       },
     );

@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseConfig } from "../src/config.ts";
-import type { Issue, PullRequest, Review } from "../src/github.ts";
+import type {
+  GitHubClient,
+  Issue,
+  PullRequest,
+  Review,
+} from "../src/github.ts";
 import { command, temporary } from "../src/process.ts";
 import {
   ciState,
@@ -10,11 +15,14 @@ import {
   finding,
   issueCategory,
   latestRequests,
+  mergeAction,
   mergeApproved,
   mergeBlocker,
+  mergeFacts,
   nextReviewStep,
   reviewed,
   reviewStamp,
+  reviewVerdict,
   validateIssue,
   validatePR,
 } from "../src/rules.ts";
@@ -254,6 +262,8 @@ test("next review step follows the bot-comment stamps", () => {
     ],
     [[], [reviewStamp("abc", true)], "merge"],
     [[], [reviewStamp("abc")], "skip"],
+    // Only the stamp itself can approve a merge, not a marker later in the report.
+    [[], [`${reviewStamp("abc")}\n\n<!-- milo:merge -->`], "skip"],
     [[], [reviewStamp("old", true)], "review"],
     [[], [failedStamp("abc", [])], "skip"],
     [[], [failedStamp("old", [])], "review"],
@@ -261,4 +271,97 @@ test("next review step follows the bot-comment stamps", () => {
   ];
   for (const [requests, comments, step] of cases)
     expect(nextReviewStep("abc", requests, comments)).toBe(step);
+});
+
+test("merge action skips change requests and waits for passing CI on an up-to-date branch", () => {
+  const cases: [
+    Parameters<typeof mergeAction>[0],
+    ReturnType<typeof mergeAction>["kind"],
+  ][] = [
+    [{ outstandingRequests: 1, ci: "passed", behindBy: 0 }, "skip"],
+    [{ outstandingRequests: 1, ci: "none", behindBy: 2 }, "skip"],
+    [{ outstandingRequests: 0, ci: "none", behindBy: 0 }, "no-ci"],
+    [{ outstandingRequests: 0, ci: "none", behindBy: 2 }, "no-ci"],
+    [{ outstandingRequests: 0, ci: "waiting", behindBy: 2 }, "waiting"],
+    [{ outstandingRequests: 0, ci: "passed", behindBy: 2 }, "update-branch"],
+    [{ outstandingRequests: 0, ci: "passed", behindBy: 0 }, "merge"],
+  ];
+  for (const [facts, kind] of cases) expect(mergeAction(facts).kind).toBe(kind);
+});
+
+test("merge facts count every change request and read every page of check runs", async () => {
+  const pr: PullRequest = {
+    number: 34,
+    state: "open",
+    body: "",
+    html_url: "https://example.test/pr/34",
+    head: { ref: "milo/issue-12", sha: "abc", repo: null },
+    base: { ref: "main", sha: "base" },
+  };
+  const passed = { status: "completed", conclusion: "success" };
+  let runs = Array(101).fill(passed);
+  // Requests on older commits or from deleted accounts still hold the merge.
+  let reviews: unknown[] = [
+    {
+      id: 1,
+      state: "CHANGES_REQUESTED",
+      commit_id: "old",
+      user: null,
+      body: "",
+    },
+  ];
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string): Promise<T> {
+      const responses: Record<string, unknown> = {
+        "commits/abc/status": { state: "pending", total_count: 0 },
+        "compare/main...abc": { behind_by: 3 },
+      };
+      return responses[endpoint] as T;
+    },
+    async pages<T>(endpoint: string, key?: string): Promise<T[]> {
+      if (endpoint === "commits/abc/check-runs" && key === "check_runs")
+        return runs as T[];
+      return (endpoint === "pulls/34/reviews" ? reviews : []) as T[];
+    },
+    async comment() {},
+    async viewer() {
+      return "milo";
+    },
+  };
+  expect(await mergeFacts(gh, pr)).toEqual({
+    outstandingRequests: 1,
+    ci: "passed",
+    behindBy: 3,
+  });
+  // A failing run past the first page of 100 still blocks the merge.
+  runs = [...runs, { ...passed, conclusion: "failure" }];
+  reviews = [];
+  expect(await mergeFacts(gh, pr)).toEqual({
+    outstandingRequests: 0,
+    ci: "waiting",
+    behindBy: 3,
+  });
+});
+
+test("review verdict queues a merge only on a merge verdict with no blocker", async () => {
+  const none = async () => undefined;
+  const lines = async () => "400 changed lines";
+  const cases: [string, () => Promise<string | undefined>, boolean, string][] =
+    [
+      ["Report\nVerdict: merge", none, true, "Auto-merge queued"],
+      ["Report\n  verdict: MERGE  ", none, true, "Auto-merge queued"],
+      ["Report\nVerdict: merge", lines, false, "held (400 changed lines)"],
+      ["Report\nVerdict: hold", none, false, "held (review verdict)"],
+      ["Verdict: merge\nbut more text", none, false, "held (review verdict)"],
+      ["No verdict", none, false, "held (review verdict)"],
+    ];
+  for (const [report, blocker, queued, note] of cases) {
+    const verdict = await reviewVerdict(report, blocker);
+    expect(verdict.queued).toBe(queued);
+    expect(verdict.note).toContain(note);
+  }
+  // A hold verdict never runs the deterministic checks.
+  await reviewVerdict("Verdict: hold", () => {
+    throw new Error("blocker ran");
+  });
 });
