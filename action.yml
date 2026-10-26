@@ -42,13 +42,31 @@ runs:
       run: |
         corepack enable
         echo COREPACK_ENABLE_DOWNLOAD_PROMPT=0 >> "$GITHUB_ENV"
+    # A slow apt mirror once took 25 minutes to send 64 MB, so .deb files are cached per runner image and
+    # package list. apt checks each cached file against the signed index and downloads any that don't match.
+    - name: Name the package cache
+      id: apt
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        MILO_ACTION_PATH: ${{ github.action_path }}
+        INPUT_CONFIG: ${{ inputs.config }}
+      run: |
+        packages=$(bun "$MILO_ACTION_PATH/src/cli.ts" --config "$INPUT_CONFIG" packages)
+        mkdir -p "$RUNNER_TEMP/milo-apt"
+        echo "key=milo-apt-$ImageOS-$ImageVersion-$RUNNER_ARCH-$(echo "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    - if: runner.os == 'Linux'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/milo-apt/*.deb
+        key: ${{ steps.apt.outputs.key }}
     # Setup and check steps run under bubblewrap; the Claude adapter's shell sandbox also needs socat.
     - name: Install sandbox
       if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install --yes bubblewrap socat
+        sudo apt-get install --yes -o Dir::Cache::Archives="$RUNNER_TEMP/milo-apt" bubblewrap socat
         if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = '1' ] && [ ! -e /etc/apparmor.d/bwrap ]; then
           printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
@@ -65,7 +83,7 @@ runs:
         test -n "$packages" || exit 0
         if [ "$RUNNER_OS" != 'Linux' ]; then echo '::warning::systemPackages are installed only on Linux runners'; exit 0; fi
         read -ra list <<< "$packages"
-        sudo apt-get install --yes --no-install-recommends "${list[@]}"
+        sudo apt-get install --yes --no-install-recommends -o Dir::Cache::Archives="$RUNNER_TEMP/milo-apt" "${list[@]}"
     - name: Install Claude Code
       if: inputs.claude-version != ''
       shell: bash
