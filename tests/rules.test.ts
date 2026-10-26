@@ -262,6 +262,8 @@ test("next review step follows the bot-comment stamps", () => {
     ],
     [[], [reviewStamp("abc", true)], "merge"],
     [[], [reviewStamp("abc")], "skip"],
+    // Only the stamp itself can approve a merge, not a marker later in the report.
+    [[], [`${reviewStamp("abc")}\n\n<!-- milo:merge -->`], "skip"],
     [[], [reviewStamp("old", true)], "review"],
     [[], [failedStamp("abc", [])], "skip"],
     [[], [failedStamp("old", [])], "review"],

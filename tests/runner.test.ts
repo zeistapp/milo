@@ -784,6 +784,10 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
   expect(await logged()).toEqual([
     "https://example.test/pr/34: waiting for passing CI",
   ]);
+  runs = [];
+  expect(await logged()).toEqual([
+    "https://example.test/pr/34: no CI checks; auto-merge needs PR CI",
+  ]);
   runs = [{ status: "completed", conclusion: "success" }];
   // Only a labelled category the repo allows, on a trusted author's ticket, merges.
   expect(await logged({ ...repo, autoMerge: [] })).toEqual([]);
@@ -801,10 +805,17 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
   behind = 0;
   expect(await logged()).toEqual(["Merged https://example.test/pr/34"]);
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
-  // A refused merge is logged and skipped, so later PRs still run.
+  // A refused write is logged and skipped, so later PRs still run.
   writes.length = 0;
   refused = true;
   open = [pr, { ...pr, number: 35, html_url: "https://example.test/pr/35" }];
+  behind = 2;
+  expect(await logged()).toContain(
+    "https://example.test/pr/34: branch update refused; resolve conflicts with main",
+  );
+  expect(writes).toEqual(["pulls/34/update-branch", "pulls/35/update-branch"]);
+  writes.length = 0;
+  behind = 0;
   expect(await logged()).toContain(
     "https://example.test/pr/34: merge refused; check branch rules and allowed merge methods",
   );
