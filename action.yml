@@ -42,24 +42,31 @@ runs:
       run: |
         corepack enable
         echo COREPACK_ENABLE_DOWNLOAD_PROMPT=0 >> "$GITHUB_ENV"
-    # A slow apt mirror once took 25 minutes to send 64 MB, so .deb files are cached per runner image and
-    # package list. apt checks each cached file against the signed index and downloads any that don't match.
-    - name: Name the package cache
+    # Sandboxed steps cannot use sudo, so Milo installs a repo's systemPackages with apt-get, outside the
+    # sandbox, just before that repo's first setup step. Most runs never set up a repo and skip the install.
+    # A slow apt mirror once took 25 minutes to send 64 MB, so the .deb files are cached per runner image.
+    # apt checks each cached file against the signed index and downloads any that don't match.
+    - name: Prepare system packages
       id: apt
-      if: runner.os == 'Linux'
       shell: bash
       env:
         MILO_ACTION_PATH: ${{ github.action_path }}
         INPUT_CONFIG: ${{ inputs.config }}
       run: |
         packages=$(bun "$MILO_ACTION_PATH/src/cli.ts" --config "$INPUT_CONFIG" packages)
+        if [ "$RUNNER_OS" != 'Linux' ]; then
+          test -z "$packages" || echo '::warning::systemPackages are installed only on Linux runners'
+          exit 0
+        fi
         mkdir -p "$RUNNER_TEMP/milo-apt"
-        echo "key=milo-apt-$ImageOS-$ImageVersion-$RUNNER_ARCH-$(echo "$packages" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
-    - if: runner.os == 'Linux'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        echo "prefix=milo-apt-$ImageOS-$ImageVersion-$RUNNER_ARCH-" >> "$GITHUB_OUTPUT"
+    - id: restore
+      if: steps.apt.outputs.prefix
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/milo-apt/*.deb
-        key: ${{ steps.apt.outputs.key }}
+        key: ${{ steps.apt.outputs.prefix }}
+        restore-keys: ${{ steps.apt.outputs.prefix }}
     # Setup and check steps run under bubblewrap; the Claude adapter's shell sandbox also needs socat.
     - name: Install sandbox
       if: runner.os == 'Linux'
@@ -71,19 +78,6 @@ runs:
           printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
         fi
-    # Sandboxed steps cannot use sudo, so a repo lists the apt packages its steps need in systemPackages.
-    # The config schema allows only package names: no options, .deb paths or pins to other releases.
-    - name: Install system packages
-      shell: bash
-      env:
-        MILO_ACTION_PATH: ${{ github.action_path }}
-        INPUT_CONFIG: ${{ inputs.config }}
-      run: |
-        packages=$(bun "$MILO_ACTION_PATH/src/cli.ts" --config "$INPUT_CONFIG" packages)
-        test -n "$packages" || exit 0
-        if [ "$RUNNER_OS" != 'Linux' ]; then echo '::warning::systemPackages are installed only on Linux runners'; exit 0; fi
-        read -ra list <<< "$packages"
-        sudo apt-get install --yes --no-install-recommends -o Dir::Cache::Archives="$RUNNER_TEMP/milo-apt" "${list[@]}"
     - name: Install Claude Code
       if: inputs.claude-version != ''
       shell: bash
@@ -105,6 +99,7 @@ runs:
         INPUT_PERIOD: ${{ inputs.period }}
         INPUT_SELF_REPO: ${{ inputs.self-repo }}
         MILO_LOG_DIR: ${{ github.event.repository.private && format('{0}/milo-logs', runner.temp) || '' }}
+        MILO_APT_ARCHIVES: ${{ steps.apt.outputs.prefix && format('{0}/milo-apt', runner.temp) || '' }}
       run: |
         if [ "$RUNNER_OS" = 'Windows' ]; then echo 'Milo currently supports Linux and macOS runners'; exit 1; fi
         args=(--config "$INPUT_CONFIG")
@@ -124,6 +119,19 @@ runs:
           *) echo 'Unknown Milo action'; exit 1 ;;
         esac
         bun "$MILO_ACTION_PATH/src/cli.ts" "${args[@]}"
+    # Keyed by the cached file names, so a run that downloaded nothing new saves nothing.
+    - name: Name the saved package cache
+      id: saved
+      if: ${{ !cancelled() && steps.apt.outputs.prefix }}
+      shell: bash
+      env:
+        PREFIX: ${{ steps.apt.outputs.prefix }}
+      run: echo "key=$PREFIX$(find "$RUNNER_TEMP/milo-apt" -maxdepth 1 -name '*.deb' -printf '%f\n' | sort | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    - if: ${{ !cancelled() && steps.saved.outputs.key != steps.restore.outputs.cache-matched-key }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/milo-apt/*.deb
+        key: ${{ steps.saved.outputs.key }}
     # Private repos only: logs hold step output and agent reports, and a public repo's artifacts are readable by anyone.
     - name: Keep logs from a failed run
       if: failure() && github.event.repository.private

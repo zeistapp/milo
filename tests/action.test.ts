@@ -63,7 +63,7 @@ test("distributed action reads the caller's config from an external working dire
       ).toContain("Configuration valid");
       // Without sudo or apt on macOS, the package step installs nothing and says so.
       const install = action.runs.steps.find(
-        (step) => step.name === "Install system packages",
+        (step) => step.name === "Prepare system packages",
       )?.run;
       if (!install) throw new Error("Missing system package step");
       expect(await command(["bash", "-c", install], { cwd: consumer })).toBe(

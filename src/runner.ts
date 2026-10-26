@@ -28,6 +28,7 @@ import guidelines from "./guidelines.txt" with { type: "text" };
 import {
   command,
   inside,
+  installPackages,
   keptLog,
   sandboxed,
   temporary,
@@ -259,6 +260,8 @@ export class Runner {
     const project = await inspectProject(root, repo);
     for (const warning of project.warnings)
       console.log(`Validation gap: ${warning}`);
+    // Every setup and check run starts here, so runs that only triage or scan never install.
+    await installPackages(repo.systemPackages);
     await steps(project.setup, root);
     const installed = await installedVersions(root, project.packages);
     await steps(project.checks, root);
