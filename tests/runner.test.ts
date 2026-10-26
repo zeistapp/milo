@@ -747,14 +747,19 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
         throw new Error("gh api: 422 merge conflict");
       const responses: Record<string, unknown> = {
         "issues/12": ticket,
-        "commits/abc/check-runs?per_page=100": { check_runs: runs },
+        // Unpaginated, GitHub returns only the first 100 check runs.
+        "commits/abc/check-runs?per_page=100": {
+          check_runs: runs.slice(0, 100),
+        },
         "commits/abc/status": status,
         "compare/main...abc": { behind_by: behind },
         "collaborators/stranger/permission": { permission: "triage" },
       };
       return (responses[endpoint] ?? {}) as T;
     },
-    async pages<T>(endpoint: string): Promise<T[]> {
+    async pages<T>(endpoint: string, key?: string): Promise<T[]> {
+      if (endpoint === "commits/abc/check-runs" && key === "check_runs")
+        return runs as T[];
       const responses: Record<string, unknown[]> = {
         "pulls?state=open": open,
         "pulls/34/reviews": reviews,
@@ -825,6 +830,14 @@ test("auto-merge waits for CI, refreshes stale branches and respects change requ
   await runner.runReviews(repo);
   expect(writes).toHaveLength(1);
   comment = "<!-- milo:review:abc --><!-- milo:merge -->";
+  // A failing check run past the first page of 100 still blocks the merge.
+  const passed = { status: "completed", conclusion: "success" };
+  runs = [...Array(100).fill(passed), { ...passed, conclusion: "failure" }];
+  expect(await logged()).toEqual([
+    "https://example.test/pr/34: waiting for passing CI",
+  ]);
+  expect(writes).toHaveLength(1);
+  runs = Array(101).fill(passed);
   await runner.runReviews(repo);
   expect(writes).toEqual(["pulls/34/update-branch", "pulls/34/merge"]);
   // A conflicted branch update is logged and skipped, so later PRs still run.
