@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, realpath } from "node:fs/promises";
+import { chmod, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Argv, Config, Repo } from "../src/config.ts";
 import type {
@@ -14,6 +14,7 @@ import {
   type CommandOptions,
   command,
   confine,
+  installPackages,
   sandboxEnv,
   sandboxed,
   temporary,
@@ -306,6 +307,37 @@ test("sandboxed steps keep their output in MILO_LOG_DIR for the failure artifact
     const [log] = [...new Bun.Glob("*.log").scanSync(logs)];
     assert(log);
     expect(await Bun.file(join(logs, log)).text()).toContain("why it broke");
+  }));
+test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =>
+  temporary("milo-apt-", async (folder) => {
+    const args = join(folder, "args");
+    await Bun.write(
+      join(folder, "sudo"),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > '${args}'\n`,
+    );
+    await chmod(join(folder, "sudo"), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${folder}:${path}`;
+    try {
+      await installPackages(["ffmpeg"]);
+      process.env.MILO_APT_ARCHIVES = join(folder, "debs");
+      await installPackages([]);
+      expect(existsSync(args)).toBeFalse();
+      await installPackages(["ffmpeg", "rsync"]);
+      expect((await Bun.file(args).text()).trim().split("\n")).toEqual([
+        "apt-get",
+        "install",
+        "--yes",
+        "--no-install-recommends",
+        "-o",
+        `Dir::Cache::Archives=${join(folder, "debs")}`,
+        "ffmpeg",
+        "rsync",
+      ]);
+    } finally {
+      process.env.PATH = path;
+      delete process.env.MILO_APT_ARCHIVES;
+    }
   }));
 test("untrusted steps cannot read Milo's token or write outside the clone", () =>
   temporary("milo-confine-", async (temp) => {
