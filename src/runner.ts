@@ -80,7 +80,14 @@ Keep a review under 120 words, and a PR description or ticket under 200.`;
 async function steps(commands: Step[], root: string): Promise<void> {
   const repo = await inside(root);
   const home = await workHome(root);
-  for (const step of commands) await sandboxed(step, repo, home);
+  for (const step of commands) {
+    const started = performance.now();
+    await sandboxed(step, repo, home);
+    const seconds = (performance.now() - started) / 1000;
+    console.log(
+      `${step.cwd ?? "."}: ${JSON.stringify(step.command)} took ${seconds.toFixed(1)} s`,
+    );
+  }
 }
 export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
   await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
