@@ -46,7 +46,8 @@ export const Comment = z.object({
 });
 export interface GitHubClient {
   api(endpoint: string, method?: string, payload?: unknown): Promise<unknown>;
-  pages(endpoint: string): Promise<unknown[]>;
+  // With a key, each page is an object and the items are its `key` array (e.g. check-runs).
+  pages(endpoint: string, key?: string): Promise<unknown[]>;
   comment(number: number, body: string): Promise<void>;
   viewer(): Promise<string>;
 }
@@ -71,7 +72,7 @@ export class GitHub implements GitHubClient {
     if (!output) throw new Error("GitHub returned an empty response");
     return JSON.parse(output);
   }
-  async pages(endpoint: string): Promise<unknown[]> {
+  async pages(endpoint: string, key?: string): Promise<unknown[]> {
     const separator = endpoint.includes("?") ? "&" : "?";
     const output = await command([
       "gh",
@@ -80,7 +81,13 @@ export class GitHub implements GitHubClient {
       "--paginate",
       "--slurp",
     ]);
-    return parse(z.array(z.array(z.unknown())), JSON.parse(output)).flat();
+    const slurped = JSON.parse(output);
+    if (key === undefined)
+      return parse(z.array(z.array(z.unknown())), slurped).flat();
+    return parse(
+      z.array(z.object({ [key]: z.array(z.unknown()) })),
+      slurped,
+    ).flatMap((page) => page[key] ?? []);
   }
   async comment(number: number, body: string): Promise<void> {
     await this.api(`issues/${number}/comments`, "POST", { body });

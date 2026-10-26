@@ -36,3 +36,27 @@ test("Milo acts and commits as its App's bot, or as the token owner without one"
       }
     }
   }));
+
+test("pages flattens keyed object pages into one array", () =>
+  temporary("milo-pages-", async (bin) => {
+    const previous = process.env.PATH;
+    // A fake gh logs its arguments and prints two slurped check-runs pages.
+    await Bun.write(
+      join(bin, "gh"),
+      `#!/bin/sh\necho "$@" > ${JSON.stringify(join(bin, "args"))}\necho '[{"total_count":3,"check_runs":[1,2]},{"total_count":3,"check_runs":[3]}]'\n`,
+    );
+    await command(["chmod", "+x", join(bin, "gh")]);
+    try {
+      process.env.PATH = `${bin}:${previous}`;
+      expect(
+        await new GitHub("o/r").pages("commits/abc/check-runs", "check_runs"),
+      ).toEqual([1, 2, 3]);
+      expect(await Bun.file(join(bin, "args")).text()).toBe(
+        "api repos/o/r/commits/abc/check-runs?per_page=100 --paginate --slurp\n",
+      );
+      // Without a key, object pages are still rejected.
+      await expect(new GitHub("o/r").pages("labels")).rejects.toThrow();
+    } finally {
+      process.env.PATH = previous;
+    }
+  }));

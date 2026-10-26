@@ -488,13 +488,12 @@ export class Runner {
       ).length
     )
       return;
-    const { check_runs: runs } = parse(
-      z.object({
-        check_runs: z.array(
-          z.object({ status: z.string(), conclusion: z.string().nullable() }),
-        ),
-      }),
-      await gh.api(`commits/${pr.head.sha}/check-runs?per_page=100`),
+    // Every page: a failing run past the first 100 must still block the merge.
+    const runs = parse(
+      z.array(
+        z.object({ status: z.string(), conclusion: z.string().nullable() }),
+      ),
+      await gh.pages(`commits/${pr.head.sha}/check-runs`, "check_runs"),
     );
     const status = parse(
       z.object({ state: z.string(), total_count: z.number() }),
