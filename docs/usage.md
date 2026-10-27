@@ -89,7 +89,7 @@ jobs:
           action: check
 ```
 
-`action: check` lints the repo's workflows with actionlint on Linux, installs the calling repository's `systemPackages`, then runs its setup and checks in the sandbox and prints each failed step's output. It needs no secrets.
+`action: check` lints the repo's workflows with actionlint on Linux, then runs the calling repository's setup and checks in the sandbox and prints each failed step's output. It needs no secrets. It skips `systemPackages`, which serve the tests Milo runs after changing code: an apt mirror can take 25 minutes to send them. A check that needs one fails in CI, so install it in an earlier step.
 
 ## Agents, models and credentials
 

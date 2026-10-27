@@ -1,7 +1,7 @@
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Repo, Step } from "./config.ts";
-import { inside, installPackages, sandboxed, temporary } from "./process.ts";
+import { inside, sandboxed, temporary } from "./process.ts";
 import { inspectProject } from "./project.ts";
 
 interface Result {
@@ -15,7 +15,7 @@ interface Result {
 export async function localCheck(
   root: string,
   folder: string,
-  repo?: Pick<Repo, "setup" | "checks" | "systemPackages">,
+  repo?: Pick<Repo, "setup" | "checks">,
 ) {
   root = await inside(resolve(root));
   folder = resolve(folder);
@@ -27,7 +27,6 @@ export async function localCheck(
     ...project.setup.map((step) => ({ phase: "setup" as const, step })),
     ...project.checks.map((step) => ({ phase: "check" as const, step })),
   ];
-  await installPackages(repo?.systemPackages);
   // Sandboxed like scheduled work, so a check that passes here passes there too.
   await temporary("milo-check-", async (scratch) => {
     const home = await realpath(scratch);
