@@ -16,7 +16,7 @@
         "simplify",
         "performance"
       ],
-      "autoReady": ["dependencies"],
+      "autoReady": ["dependencies", "simplify", "performance"],
       "autoMerge": ["dependencies", "simplify", "performance"]
     }
   ]
