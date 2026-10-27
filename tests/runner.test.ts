@@ -19,7 +19,7 @@ import {
   sandboxed,
   temporary,
 } from "../src/process.ts";
-import { periodKey, reviewStamp } from "../src/rules.ts";
+import { fixedStamp, periodKey, reviewStamp } from "../src/rules.ts";
 import { Runner } from "../src/runner.ts";
 
 function issue(body = "", state = "open"): Issue {
@@ -38,12 +38,18 @@ test("scans open one finding per category and period, and skip clean or outstand
   temporary("milo-scan-", async (folder) => {
     const fakeAgent = join(folder, "agent.ts");
     const calls = join(folder, "calls.txt");
+    const verifyPrompt = join(folder, "verify-prompt.txt");
+    // Both scans find something; the verifier confirms the security finding and drops the other.
     await Bun.write(
       fakeAgent,
       `const prompt = await Bun.stdin.text();
 const log = Bun.file(${JSON.stringify(calls)});
 await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
-await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Verdict: clean");`,
+const verify = prompt.includes("A scan raised the ticket below");
+if (verify) await Bun.write(${JSON.stringify(verifyPrompt)}, prompt);
+await Bun.write(Bun.argv[2]!, !verify
+  ? prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Title: Inline a helper\\nEvidence"
+  : prompt.includes("Patch hono") ? "Title: Patch hono\\nReproduced" : "Already handled\\nVerdict: clean");`,
     );
     const labels = new Map<string, string | null>();
     const open: Issue[] = [];
@@ -109,6 +115,11 @@ await Bun.write(Bun.argv[2]!, prompt.includes("for security work") ? "Title: Pat
       labels: string[];
     };
     expect(ticket.title).toBe("Patch hono");
+    // The filed ticket is the verifier's rewrite, checked against open work.
+    expect(ticket.body).toContain("Reproduced");
+    expect(await Bun.file(verifyPrompt).text()).toContain(
+      "Open tickets and PRs",
+    );
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
     expect(labels.get("milo:simplify")).toBe(
@@ -461,6 +472,7 @@ if (prompt.includes("Implement this ticket:")) {
   if (!prompt.includes("stale")) await Bun.write("file.txt", "new\\n");
 }
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
+if (prompt.includes("Fix these findings")) await Bun.write("file.txt", prompt.includes("Rename it") ? "fixed\\n" : "wrong\\n");
 if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
 await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       );
@@ -591,6 +603,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       expect(await Bun.file(reviewPrompt).text()).toContain(
         "<!-- milo:dependencies:key -->",
       );
+      expect(await Bun.file(reviewPrompt).text()).toContain("Setup has run");
       const count = comments.length;
       await runner.review(repo, 34);
       expect(comments).toHaveLength(count);
@@ -608,6 +621,17 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       const revisedHead = await head();
       await runner.revise(repo, 34);
       expect(await head()).toBe(revisedHead);
+      // Milo fixes its own review's findings only from a fix stamp on the current head.
+      expect(await runner.revise(repo, 34, true)).toBeFalse();
+      // GitHub moves the PR ref when the branch moves; the bare remote needs a nudge.
+      await git(remote, "update-ref", "refs/pull/34/head", revisedHead);
+      comments.push({
+        body: `${reviewStamp(revisedHead, "fix")}\n\nAutomated review:\n\nRename it\nVerdict: fix`,
+        user: { login: "milo" },
+      });
+      await runner.revise(repo, 34, true);
+      expect(await git(remote, "show", "milo/issue-12:file.txt")).toBe("fixed");
+      expect(comments.at(-1)?.body).toStartWith(fixedStamp);
       const calls = await Bun.file(invocations).text();
       prs.length = 0;
       await expect(
@@ -917,9 +941,11 @@ test("a failed or empty review attempt does not block later PRs", async () => {
       await gh.comment(number, reviewStamp(sha));
     },
   );
+  const fixes: number[] = [];
   const revise = spyOn(runner, "revise").mockImplementation(
-    async (_repo, number) => {
-      calls.push([number, true]);
+    async (_repo, number, fromReview) => {
+      if (fromReview) fixes.push(number);
+      else calls.push([number, true]);
       return outcome();
     },
   );
@@ -965,6 +991,19 @@ test("a failed or empty review attempt does not block later PRs", async () => {
       [34, false],
     ]);
     expect(comments[34]?.at(-2)?.body).toStartWith("<!-- milo:failed:c: -->");
+    // A fix verdict revises from the review once; a failed fix is not retried on that head.
+    open = [pr(34, "e"), pr(35, "b")];
+    comments[34]?.push({
+      body: reviewStamp("e", "fix"),
+      user: { login: "milo" },
+    });
+    outcome = async () => false;
+    await runner.runReviews(repo);
+    await runner.runReviews(repo);
+    expect(fixes).toEqual([34]);
+    expect(comments[34]?.at(-1)?.body).toStartWith(
+      "<!-- milo:failed:e::fix -->",
+    );
   } finally {
     review.mockRestore();
     revise.mockRestore();

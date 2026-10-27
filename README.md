@@ -16,7 +16,7 @@ Every six hours Milo works the oldest approved ticket and reviews open Milo PRs.
 | Architecture | Starts from recent hot spots and proposes one change that makes modules deeper and easier to test. |
 | Simplify | Makes code shorter and clearer without changing behaviour: removes dead code and duplication, and uses modern native features. |
 | Performance | Measures a bottleneck, sets a baseline and optimises it. No claimed gains without measurements. |
-| PR reviews | Checks each commit on Milo's PRs and addresses **Changes requested** reviews from repository writers. |
+| PR reviews | Reviews each commit on Milo's PRs by running the code, fixes what the review finds (up to twice per PR), and addresses **Changes requested** reviews from repository writers. |
 
 ## Set up your repo
 
