@@ -327,8 +327,10 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
       `#!/bin/sh\nprintf '%s\\n' "$@" > '${args}'\n`,
     );
     await chmod(join(folder, "sudo"), 0o755);
-    const path = process.env.PATH;
+    const { PATH: path, MILO_APT_ARCHIVES: archives } = process.env;
     process.env.PATH = `${folder}:${path}`;
+    // Milo's own task runs inherit the action's MILO_APT_ARCHIVES.
+    delete process.env.MILO_APT_ARCHIVES;
     try {
       await installPackages(["ffmpeg"]);
       process.env.MILO_APT_ARCHIVES = join(folder, "debs");
@@ -347,7 +349,8 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
       ]);
     } finally {
       process.env.PATH = path;
-      delete process.env.MILO_APT_ARCHIVES;
+      if (archives === undefined) delete process.env.MILO_APT_ARCHIVES;
+      else process.env.MILO_APT_ARCHIVES = archives;
     }
   }));
 test("untrusted steps cannot read Milo's token or write outside the clone", () =>
