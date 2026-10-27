@@ -616,15 +616,14 @@ export class Runner {
           "diff",
           "--no-ext-diff",
           "--no-textconv",
-          pr.base.sha,
-          "HEAD",
+          `${pr.base.sha}...HEAD`,
           "--",
         );
         const ticket = await this.ticket(gh, pr);
         const report = await runAgent(
           this.config,
           root,
-          `Review the diff against ${pr.base.sha}. Inspect surrounding code. ` +
+          `Review the diff from the merge base with ${pr.base.sha} (git diff ${pr.base.sha}...HEAD); changes only on the base branch are not part of this PR. Inspect surrounding code. ` +
             "Setup has run, so verify rather than assume: run the tests, type checks and code the change touches, and try the edge cases. Nothing you change in this clone is kept. " +
             "Check that it does what the ticket asks and nothing more; judge scope against the ticket, not the author's description. " +
             "Report actionable correctness, security, scope, testing and architecture findings with locations. " +
