@@ -24,19 +24,32 @@ export const labels = {
 const branchPattern = /^milo\/issue-[1-9][0-9]*$/;
 
 // Markers lead a bot comment, so report text after them cannot forge one.
-export const reviewStamp = (sha: string, merge = false) =>
-  `<!-- milo:review:${sha} -->${merge ? "<!-- milo:merge -->" : ""}`;
-// Records that a scheduled review or revision left nothing on this head for these change requests.
-export const failedStamp = (sha: string, requests: Review[]) =>
-  `<!-- milo:failed:${sha}:${requests.map((review) => review.id).join(",")} -->`;
+export const reviewStamp = (sha: string, mark?: "merge" | "fix") =>
+  `<!-- milo:review:${sha} -->${mark ? `<!-- milo:${mark} -->` : ""}`;
+// Records that a scheduled review, revision or fix left nothing on this head for these change requests.
+export const failedStamp = (sha: string, requests: Review[], fix = false) =>
+  `<!-- milo:failed:${sha}:${requests.map((review) => review.id).join(",")}${fix ? ":fix" : ""} -->`;
+// Leads the comment on each commit Milo pushed to fix its own review's findings.
+export const fixedStamp = "<!-- milo:fixed -->";
 export const ticketStamp = (category: Category, key: string) =>
   `<!-- milo:${category}:${key} -->`;
 export const reviewed = (body: string, sha: string) =>
   body.startsWith(reviewStamp(sha));
 export const mergeApproved = (body: string, sha: string) =>
-  body.startsWith(reviewStamp(sha, true));
-export const failed = (body: string, sha: string, requests: Review[]) =>
-  body.startsWith(failedStamp(sha, requests));
+  body.startsWith(reviewStamp(sha, "merge"));
+export const fixRequested = (body: string, sha: string) =>
+  body.startsWith(reviewStamp(sha, "fix"));
+export const failed = (
+  body: string,
+  sha: string,
+  requests: Review[],
+  fix = false,
+) => body.startsWith(failedStamp(sha, requests, fix));
+// Bounds what one PR can spend on fixing its own reviews; past it, a human takes over.
+const autoFixLimit = 2;
+export const fixesLeft = (botComments: string[]) =>
+  botComments.filter((body) => body.startsWith(fixedStamp)).length <
+  autoFixLimit;
 
 function week(date: Date): string {
   const day = new Date(
@@ -171,21 +184,35 @@ export function mergeAction(facts: MergeFacts): MergeAction {
   if (facts.ci === "waiting") return { kind: "waiting" };
   return { kind: facts.behindBy ? "update-branch" : "merge" };
 }
-// Queues an auto-merge only on a merge verdict that no deterministic limit blocks.
-export async function reviewVerdict(
+// Only the report's last line counts, so a verdict quoted from the diff or ticket cannot set it.
+export function reviewVerdict(report: string): "merge" | "fix" | "hold" {
+  const last = report.trim().split("\n").at(-1) ?? "";
+  const verdict = /^[\s>*_`]*verdict:[\s*_`]*(merge|fix)[\s*_`.]*$/i
+    .exec(last)?.[1]
+    ?.toLowerCase();
+  return verdict === "merge" || verdict === "fix" ? verdict : "hold";
+}
+// Turns the verdict into the review stamp's mark: fix queues a revision, merge queues an
+// auto-merge for an eligible PR that no deterministic limit blocks.
+export async function reviewOutcome(
   report: string,
+  eligible: boolean,
+  canFix: boolean,
   blocker: () => Promise<string | undefined>,
-): Promise<{ queued: boolean; note: string }> {
-  const held = /(?:^|\n)\s*verdict:\s*merge\s*$/i.test(report)
-    ? await blocker()
-    : "review verdict";
+): Promise<{ mark?: "merge" | "fix"; note: string }> {
+  const verdict = reviewVerdict(report);
+  if (verdict === "fix")
+    return canFix
+      ? { mark: "fix", note: "\n\nMilo fixes these findings next." }
+      : {
+          note: "\n\nMilo has used its automatic fixes on this PR; a human must address these findings.",
+        };
+  if (!eligible) return { note: "" };
+  const held = verdict === "merge" ? await blocker() : "review verdict";
   return held
-    ? {
-        queued: false,
-        note: `\n\nAuto-merge held (${held}); a human must review this PR.`,
-      }
+    ? { note: `\n\nAuto-merge held (${held}); a human must review this PR.` }
     : {
-        queued: true,
+        mark: "merge",
         note: "\n\nAuto-merge queued: Milo merges this commit after its CI passes.",
       };
 }
@@ -194,12 +221,16 @@ export function nextReviewStep(
   sha: string,
   requests: Review[],
   botComments: string[],
-): "revise" | "review" | "merge" | "skip" {
-  const attempted = (requests: Review[]) =>
-    botComments.some((body) => failed(body, sha, requests));
+): "revise" | "fix" | "review" | "merge" | "skip" {
+  const attempted = (requests: Review[], fix = false) =>
+    botComments.some((body) => failed(body, sha, requests, fix));
   if (requests.length && !attempted(requests)) return "revise";
   const review = botComments.find((body) => reviewed(body, sha));
-  if (review) return mergeApproved(review, sha) ? "merge" : "skip";
+  if (review) {
+    if (mergeApproved(review, sha)) return "merge";
+    // The review checked the fix budget when it stamped fix, and only a new head spends it.
+    return fixRequested(review, sha) && !attempted([], true) ? "fix" : "skip";
+  }
   return attempted([]) ? "skip" : "review";
 }
 const lockfiles = new Set([

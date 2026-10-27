@@ -13,6 +13,9 @@ import {
   failed,
   failedStamp,
   finding,
+  fixedStamp,
+  fixesLeft,
+  fixRequested,
   issueCategory,
   latestRequests,
   mergeAction,
@@ -21,8 +24,8 @@ import {
   mergeFacts,
   nextReviewStep,
   reviewed,
+  reviewOutcome,
   reviewStamp,
-  reviewVerdict,
   validateIssue,
   validatePR,
 } from "../src/rules.ts";
@@ -195,19 +198,29 @@ test("markers match only at the start of a comment and only for their commit", (
     body: "",
   };
   expect(reviewed(`${reviewStamp("abc")}\n\nreport`, "abc")).toBeTrue();
-  expect(reviewed(`${reviewStamp("abc", true)}\n\nreport`, "abc")).toBeTrue();
+  expect(
+    reviewed(`${reviewStamp("abc", "merge")}\n\nreport`, "abc"),
+  ).toBeTrue();
   expect(reviewed(`quoted ${reviewStamp("abc")}`, "abc")).toBeFalse();
   expect(reviewed(reviewStamp("abc"), "ab")).toBeFalse();
   expect(reviewed(reviewStamp("abc"), "abcd")).toBeFalse();
-  expect(mergeApproved(reviewStamp("abc", true), "abc")).toBeTrue();
+  expect(mergeApproved(reviewStamp("abc", "merge"), "abc")).toBeTrue();
   expect(mergeApproved(reviewStamp("abc"), "abc")).toBeFalse();
-  expect(mergeApproved(reviewStamp("abc", true), "def")).toBeFalse();
-  expect(mergeApproved(`x${reviewStamp("abc", true)}`, "abc")).toBeFalse();
+  expect(mergeApproved(reviewStamp("abc", "merge"), "def")).toBeFalse();
+  expect(mergeApproved(`x${reviewStamp("abc", "merge")}`, "abc")).toBeFalse();
   expect(failed(failedStamp("abc", [request]), "abc", [request])).toBeTrue();
   expect(failed(failedStamp("abc", []), "abc", [request])).toBeFalse();
   expect(failed(failedStamp("abc", [request]), "abc", [])).toBeFalse();
   expect(failed(failedStamp("abc", []), "def", [])).toBeFalse();
   expect(failed(` ${failedStamp("abc", [])}`, "abc", [])).toBeFalse();
+  expect(failed(failedStamp("abc", [], true), "abc", [])).toBeFalse();
+  expect(failed(failedStamp("abc", []), "abc", [], true)).toBeFalse();
+  expect(fixRequested(reviewStamp("abc", "fix"), "abc")).toBeTrue();
+  expect(fixRequested(reviewStamp("abc", "merge"), "abc")).toBeFalse();
+  expect(mergeApproved(reviewStamp("abc", "fix"), "abc")).toBeFalse();
+  expect(fixesLeft([`${fixedStamp}\n\nReview findings addressed.`])).toBeTrue();
+  expect(fixesLeft([fixedStamp, `quoted ${fixedStamp}`])).toBeTrue();
+  expect(fixesLeft([fixedStamp, fixedStamp])).toBeFalse();
 });
 
 test("CI state treats missing CI, pending or failing checks and passes distinctly", () => {
@@ -252,20 +265,26 @@ test("next review step follows the bot-comment stamps", () => {
   };
   const cases: [Review[], string[], ReturnType<typeof nextReviewStep>][] = [
     [[request], [], "revise"],
-    [[request], [reviewStamp("abc", true)], "revise"],
+    [[request], [reviewStamp("abc", "merge")], "revise"],
     // An already-failed revision falls through to the remaining stamps.
     [[request], [failedStamp("abc", [request])], "review"],
     [
       [request],
-      [failedStamp("abc", [request]), reviewStamp("abc", true)],
+      [failedStamp("abc", [request]), reviewStamp("abc", "merge")],
       "merge",
     ],
-    [[], [reviewStamp("abc", true)], "merge"],
+    [[], [reviewStamp("abc", "merge")], "merge"],
     [[], [reviewStamp("abc")], "skip"],
     // Only the stamp itself can approve a merge, not a marker later in the report.
     [[], [`${reviewStamp("abc")}\n\n<!-- milo:merge -->`], "skip"],
-    [[], [reviewStamp("old", true)], "review"],
+    [[], [reviewStamp("old", "merge")], "review"],
     [[], [failedStamp("abc", [])], "skip"],
+    // A fix verdict queues one fix attempt per head; a human's request still comes first.
+    [[], [reviewStamp("abc", "fix")], "fix"],
+    [[request], [reviewStamp("abc", "fix")], "revise"],
+    [[], [failedStamp("abc", [], true), reviewStamp("abc", "fix")], "skip"],
+    [[], [failedStamp("abc", []), reviewStamp("abc", "fix")], "fix"],
+    [[], [reviewStamp("old", "fix")], "review"],
     [[], [failedStamp("old", [])], "review"],
     [[], [], "review"],
   ];
@@ -343,25 +362,41 @@ test("merge facts count every change request and read every page of check runs",
   });
 });
 
-test("review verdict queues a merge only on a merge verdict with no blocker", async () => {
+test("review outcome fixes on a fix verdict and queues a merge only on an eligible merge verdict with no blocker", async () => {
   const none = async () => undefined;
   const lines = async () => "400 changed lines";
-  const cases: [string, () => Promise<string | undefined>, boolean, string][] =
-    [
-      ["Report\nVerdict: merge", none, true, "Auto-merge queued"],
-      ["Report\n  verdict: MERGE  ", none, true, "Auto-merge queued"],
-      ["Report\nVerdict: merge", lines, false, "held (400 changed lines)"],
-      ["Report\nVerdict: hold", none, false, "held (review verdict)"],
-      ["Verdict: merge\nbut more text", none, false, "held (review verdict)"],
-      ["No verdict", none, false, "held (review verdict)"],
-    ];
-  for (const [report, blocker, queued, note] of cases) {
-    const verdict = await reviewVerdict(report, blocker);
-    expect(verdict.queued).toBe(queued);
-    expect(verdict.note).toContain(note);
+  const cases: [
+    string,
+    boolean,
+    boolean,
+    () => Promise<string | undefined>,
+    "merge" | "fix" | undefined,
+    string,
+  ][] = [
+    ["Report\nVerdict: merge", true, true, none, "merge", "Auto-merge queued"],
+    ["Report\n  verdict: MERGE  ", true, true, none, "merge", "queued"],
+    // Models bold or quote the line; only its position matters.
+    ["Report\n**Verdict: merge**", true, true, none, "merge", "queued"],
+    ["Report\nVerdict: merge", true, true, lines, undefined, "(400 changed"],
+    ["Report\nVerdict: hold", true, true, none, undefined, "(review verdict)"],
+    ["Verdict: merge\nbut more text", true, true, none, undefined, "held"],
+    ["No verdict", true, true, none, undefined, "held (review verdict)"],
+    // Ineligible PRs never queue a merge, and say nothing about one.
+    ["Report\nVerdict: merge", false, true, none, undefined, ""],
+    // Fixes apply to every Milo PR, until its budget runs out.
+    ["Report\n`Verdict: fix`", false, true, none, "fix", "fixes these"],
+    ["Report\nVerdict: fix", true, false, none, undefined, "a human must"],
+  ];
+  for (const [report, eligible, canFix, blocker, mark, note] of cases) {
+    const outcome = await reviewOutcome(report, eligible, canFix, blocker);
+    expect(outcome.mark).toBe(mark);
+    expect(outcome.note).toContain(note);
   }
-  // A hold verdict never runs the deterministic checks.
-  await reviewVerdict("Verdict: hold", () => {
+  // Only an eligible merge verdict runs the deterministic checks.
+  const blocker = () => {
     throw new Error("blocker ran");
-  });
+  };
+  await reviewOutcome("Verdict: hold", true, true, blocker);
+  await reviewOutcome("Verdict: fix", true, true, blocker);
+  await reviewOutcome("Verdict: merge", false, true, blocker);
 });
