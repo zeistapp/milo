@@ -52,6 +52,9 @@ test("distributed action reads the caller's config from an external working dire
       INPUT_PERIOD: "week",
       INPUT_SELF_REPO: "",
       RUNNER_OS: "macOS",
+      RUNNER_TEMP: consumer,
+      GITHUB_REPOSITORY: "owner/repo",
+      MILO_LOG_DIR: "",
     };
     const original = Object.fromEntries(
       Object.keys(env).map((key) => [key, process.env[key]]),
@@ -86,6 +89,13 @@ test("distributed action reads the caller's config from an external working dire
       expect(
         await command(["bash", "-c", script], { cwd: consumer }),
       ).toContain("--period week task");
+      // CI checks the calling repository's configured checks unless told another.
+      process.env.INPUT_ACTION = "check";
+      expect(
+        await command(["bash", "-c", script], { cwd: consumer }),
+      ).toContain(
+        `--repo owner/repo check --report-dir ${consumer}/milo-check`,
+      );
       process.env.MILO_ACTION_PATH = root;
       process.env.INPUT_ACTION = "work";
       process.env.INPUT_NUMBER = "12; touch injected";

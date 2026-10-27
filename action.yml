@@ -5,7 +5,7 @@ inputs:
     description: Configuration path in the caller's checked-out repository
     default: milo.config.json
   action:
-    description: validate, plan, task, reviews, work, review, revise, or tick
+    description: validate, check, plan, task, reviews, work, review, revise, or tick
     default: tick
   repo:
     description: Configured owner/repository (required for numbered actions)
@@ -78,6 +78,11 @@ runs:
           printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap >/dev/null
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
         fi
+    # CI for the caller's repo: lint its workflows, then run its configured setup and checks below.
+    - name: Check GitHub Actions workflows
+      if: inputs.action == 'check' && runner.os == 'Linux'
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/scripts/actionlint.sh"'
     - name: Install Claude Code
       if: inputs.claude-version != ''
       shell: bash
@@ -109,6 +114,9 @@ runs:
         if [ -n "$INPUT_SELF_REPO" ]; then args+=(--self-repo "$INPUT_SELF_REPO"); fi
         case "$INPUT_ACTION" in
           validate|tick|reviews|task) args+=("$INPUT_ACTION") ;;
+          check)
+            if [ -z "$INPUT_REPO" ]; then args+=(--repo "$GITHUB_REPOSITORY"); fi
+            args+=(check --report-dir "${MILO_LOG_DIR:-$RUNNER_TEMP/milo-check}") ;;
           plan)
             args+=(plan)
             if [ "$INPUT_APPLY" = 'true' ]; then args+=(--apply); fi ;;

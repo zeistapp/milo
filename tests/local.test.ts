@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { temporary } from "../src/process.ts";
 
 test("local checks report failures, continue checks and save private logs", () =>
   temporary("milo-local-", async (root) => {
+    const printed = spyOn(console, "log");
     const report = await localCheck(root, join(root, "reports"), {
       setup: [],
       checks: [
@@ -29,6 +30,9 @@ test("local checks report failures, continue checks and save private logs", () =
     assert(log);
     expect(await Bun.file(log).text()).toContain("diagnostic");
     expect((await stat(log)).mode & 0o777).toBe(0o600);
+    // The failing step's output is printed, so CI shows why it failed.
+    expect(printed.mock.calls.flat().join("\n")).toContain("diagnostic");
+    printed.mockRestore();
   }));
 test("failed setup skips checks without claiming they passed", () =>
   temporary("milo-local-", async (root) => {

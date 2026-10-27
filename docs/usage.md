@@ -73,6 +73,24 @@ Discovery skips dependency/generated directories, but can find example and fixtu
 
 The local `check` command runs setup and validation in the same sandbox as scheduled work, without GitHub writes or agent calls. It saves a JSON report and private command logs, continues after failed checks, and skips checks when setup fails. Scripts can write generated files, so use a disposable checkout to preserve your working tree. The `examples/ecosystem.json` template shows a monorepo pipeline with six Wrangler deployment dry runs. Replace its repository name and example API URL before using it. Astro SSR checks use the generated deployment configs; other Workers use their source configs. These checks validate local bundles and configuration without uploading. They do not check live Cloudflare resources, secrets, DNS, migration safety or deployed health. Use the preset only in a disposable checkout, since setup replaces `.dev.vars` with the tracked example.
 
+Run the same checks in your CI, so CI and Milo's baseline share one list in `milo.config.json`:
+
+```yaml
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zeistapp/milo@main
+        with:
+          action: check
+```
+
+`action: check` lints the repo's workflows with actionlint on Linux, installs the calling repository's `systemPackages`, then runs its setup and checks in the sandbox and prints each failed step's output. It needs no secrets.
+
 ## Agents, models and credentials
 
 Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.scanModel`:
