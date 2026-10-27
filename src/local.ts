@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Repo, Step } from "./config.ts";
 import { inside, sandboxed, temporary } from "./process.ts";
@@ -64,6 +64,9 @@ export async function localCheck(
         if (phase === "setup") setupFailed = true;
       }
       console.log(`${results.at(-1)?.status}: ${log}`);
+      // CI shows the failing step's output inline rather than only its path.
+      if (results.at(-1)?.status === "failed")
+        console.log(await readFile(log, "utf8").catch(() => ""));
     }
   });
   const report = {
