@@ -593,7 +593,17 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
         body: `<!-- milo:review:${originalHead} -->`,
         user: { login: "stranger" },
       });
+      // The base branch moves on; its new commits must not show up in the review diff.
+      await Bun.write(join(source, "later.txt"), "main only\n");
+      await git(source, "add", "later.txt");
+      await git(source, "commit", "-qm", "Later on main");
+      await git(source, "push", "-q", remote, "main");
+      const pr = prs[0];
+      assert(pr);
+      pr.base = { ...pr.base, sha: await git(source, "rev-parse", "HEAD") };
       await runner.review(repo, 34);
+      pr.base = { ...pr.base, sha: base };
+      expect(await Bun.file(reviewPrompt).text()).not.toContain("later.txt");
       expect(
         comments.some(
           (comment) =>
