@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { z } from "zod";
-import type { Argv } from "./config.ts";
+import type { Agent, Argv } from "./config.ts";
 import {
   agentCredentials,
   CommandError,
@@ -50,11 +50,12 @@ function stopReason({ subtype, result }: z.infer<typeof Outcome>): string {
   return label ? `: ${label}` : "";
 }
 
+type Flags = Pick<Agent, "model" | "effort" | "maxBudgetUsd">;
 export function claudeCommand(
   root: string,
   home: string,
   readOnly: boolean,
-  model?: string,
+  { model, effort, maxBudgetUsd }: Flags = {},
 ): Argv {
   // Read-only runs keep a sandboxed shell for searching, git history and registry lookups.
   const tools = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "Bash"];
@@ -106,6 +107,8 @@ export function claudeCommand(
     JSON.stringify(settings),
     "--output-format",
     "json",
+    ...(effort ? ["--effort", effort] : []),
+    ...(maxBudgetUsd ? ["--max-budget-usd", String(maxBudgetUsd)] : []),
     ...(model ? ["--model", model] : []),
   ];
 }
@@ -115,7 +118,7 @@ export async function runClaude(
   home: string,
   input: string,
   readOnly: boolean,
-  model?: string,
+  flags: Flags = {},
   timeoutSeconds = 1800,
 ): Promise<string> {
   const options = {
@@ -135,7 +138,7 @@ export async function runClaude(
   const { HOME: _, ...paths } = sandboxEnv(home);
   // Claude exits 1 on API errors but still prints its JSON result, which says why.
   let failure: CommandError | undefined;
-  const stdout = await command(claudeCommand(root, home, readOnly, model), {
+  const stdout = await command(claudeCommand(root, home, readOnly, flags), {
     ...options,
     input,
     // Claude may ignore CLAUDE.md in --add-dir directories without this flag.

@@ -9,17 +9,9 @@ export function parse<T extends z.ZodType>(
   if (!result.success) throw new Error(z.prettifyError(result.error));
   return result.data;
 }
-const Current = z.enum(
-  [
-    "dependencies",
-    "security",
-    "bugs",
-    "architecture",
-    "simplify",
-    "performance",
-  ],
-  { error: "Unknown maintenance category" },
-);
+const Current = z.enum(["security", "bugs", "architecture", "simplify"], {
+  error: "Unknown maintenance category",
+});
 // Retired names still parse, so older configs, CLI calls and ticket labels keep working.
 export const retiredCategories = {
   cleanup: "simplify",
@@ -37,8 +29,6 @@ export type Category = z.infer<typeof Category>;
 export const categoryNames = Current.options;
 // Each scan stays in its area, with its own evidence bar, so a finding has one obvious home.
 export const categories = {
-  dependencies:
-    "Upgrade compatible dependencies and lockfiles, including any with known vulnerabilities. Consult current official release notes. Move packages released together, such as react and react-dom, to the same version. Keep major upgrades separate.",
   security:
     "Review security-sensitive code: authentication, authorisation, injection, secret handling and data crossing trust boundaries. Show the exploit path. " +
     "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. Add Zod only where it replaces hand-written validation or unchecked casts. " +
@@ -52,9 +42,9 @@ export const categories = {
   simplify:
     "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +
     "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code.",
-  performance:
-    "Find a bottleneck you can measure without editing files, report the baseline measurement and propose the optimisation with the target it must beat. Do not claim improvements without measurements.",
 } satisfies Record<Category, string>;
+// Daily scans of these categories wait this many days between runs.
+export const scanEveryDays: Partial<Record<Category, number>> = { simplify: 3 };
 export const Period = z.enum(["day", "week", "month"], {
   error: "period must be day, week, or month",
 });
@@ -78,18 +68,30 @@ const Step = z.object({
 export type Step = z.infer<typeof Step>;
 // Two retired names can map to one category; scan it once.
 const unique = <T>(list: T[]) => [...new Set(list)];
+// Removed scans (Dependabot covers dependencies; performance scans found nothing), dropped so configs listing them still load.
+const removed = ["dependencies", "performance"];
+const withoutRemoved = (list: unknown) =>
+  Array.isArray(list) ? list.filter((name) => !removed.includes(name)) : list;
 const Repo = z
   .object({
     name: z
       .string()
       .regex(/^[\w.-]+\/[\w.-]+$/, "repo.name must be owner/repository"),
     categories: z
-      .array(Category)
-      .min(1, "Select at least one category")
+      .preprocess(
+        withoutRemoved,
+        z.array(Category).min(1, "Select at least one category"),
+      )
       .transform(unique)
       .optional(),
-    autoReady: z.array(Category).transform(unique).optional(),
-    autoMerge: z.array(Category).transform(unique).optional(),
+    autoReady: z
+      .preprocess(withoutRemoved, z.array(Category))
+      .transform(unique)
+      .optional(),
+    autoMerge: z
+      .preprocess(withoutRemoved, z.array(Category))
+      .transform(unique)
+      .optional(),
     // Installed by the action on Linux, outside the sandbox, because setup steps cannot use sudo.
     systemPackages: z
       .array(
@@ -131,6 +133,17 @@ const Agent = z
     model: Model("agent.model"),
     // Scans are read-only and run once per category, so a cheaper model often suffices.
     scanModel: Model("agent.scanModel"),
+    // Edits, verification and reviews; scans keep the CLI's default effort.
+    effort: z
+      .enum(["low", "medium", "high", "xhigh", "max"], {
+        error: "agent.effort must be low, medium, high, xhigh or max",
+      })
+      .optional(),
+    // Per Claude call, so one runaway ticket cannot spend without limit.
+    maxBudgetUsd: z
+      .number({ error: "agent.maxBudgetUsd must be a positive number" })
+      .positive("agent.maxBudgetUsd must be a positive number")
+      .optional(),
     command: Argv.optional(),
     timeoutSeconds: z
       .int({ error: timeout })
@@ -148,10 +161,14 @@ const Agent = z
     "agent.command must be an argv array containing {output}",
   )
   .refine(
-    ({ provider, model, scanModel }) =>
-      provider || (model === undefined && scanModel === undefined),
+    ({ provider, ...flags }) =>
+      provider ||
+      [flags.model, flags.scanModel, flags.effort, flags.maxBudgetUsd].every(
+        (flag) => flag === undefined,
+      ),
     "Set model flags in a custom agent.command, or use agent.provider",
   );
+export type Agent = z.infer<typeof Agent>;
 const Config = z.object({
   agent: Agent,
   repos: z

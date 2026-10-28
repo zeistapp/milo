@@ -6,16 +6,14 @@ It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, Rea
 
 ## What Milo does
 
-Every six hours Milo works the oldest approved ticket and reviews open Milo PRs. Once a day it scans each of six areas. Each scan stays in its own area:
+Every six hours Milo works the oldest approved ticket and reviews open Milo PRs. Once a day it scans for security, bugs and architecture, and every third day for simplify. Each scan stays in its own area:
 
 | Task | What it does |
 | --- | --- |
-| Dependencies | Upgrades compatible dependencies and lockfiles, including any with known vulnerabilities. Major upgrades get their own PR. |
 | Security | Reviews authentication, authorisation, injection, secret handling and data crossing trust boundaries, and shows the exploit path. |
 | Bugs | Finds behaviour that is wrong today: unhandled edge cases, races and stuck state. Each fix comes with a test that fails before it. |
 | Architecture | Starts from recent hot spots and proposes one change that makes modules deeper and easier to test. |
 | Simplify | Makes code shorter and clearer without changing behaviour: removes dead code and duplication, and uses modern native features. |
-| Performance | Measures a bottleneck, sets a baseline and optimises it. No claimed gains without measurements. |
 | PR reviews | Reviews each commit on Milo's PRs by running the code, fixes what the review finds (up to twice per PR), and addresses **Changes requested** reviews from repository writers. |
 
 ## Set up your repo
@@ -56,7 +54,7 @@ jobs:
 
 4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
-Limit scans with `categories` in your config. The retired names `cleanup` and `modernisation` still work as `simplify`, and `organisation` as `architecture`.
+Limit scans with `categories` in your config. Use [Dependabot](https://docs.github.com/en/code-security/dependabot) for dependency upgrades; Milo dropped its dependency and performance scans ([why](docs/adr/0001-remove-dependency-and-performance-scans.md)), and configs that still list them load without them. The retired names `cleanup` and `modernisation` still work as `simplify`, and `organisation` as `architecture`.
 
 ## Move an existing setup to automatic updates
 
@@ -65,9 +63,8 @@ Older setups copied one workflow per task, so schedule changes, new tasks and ac
 1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
 2. Add the `milo.yml` from step 3 above. If you still use a personal token, add `MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}` to its `secrets:` block, or [switch to the GitHub App](docs/usage.md#run-milo-as-a-github-app).
 3. Keep your `maintenance` environment, secrets and variables as they are. The `secrets:` block in `milo.yml` is required when your repo has a different owner from `zeistapp`: without it GitHub passes empty secrets.
-4. If you used `categories` to limit tasks, keep it. Otherwise Milo scans all six daily.
-5. Optional: let Milo merge minor dependency PRs by adding `"autoReady": ["dependencies"], "autoMerge": ["dependencies"]` to your repo entry. See [automatic merging](docs/usage.md#automatic-merging) for what that needs.
-6. Commit to your default branch, then run **Milo** from the Actions tab to check it works.
+4. If you used `categories` to limit tasks, keep it. Otherwise Milo scans security, bugs and architecture daily and simplify every third day.
+5. Commit to your default branch, then run **Milo** from the Actions tab to check it works.
 
 If a run fails, the run summary now shows the reason.
 
@@ -82,7 +79,7 @@ Milo runs Claude Code. Choose the model in your config:
 }
 ```
 
-Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release.
+Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. Milo runs edits and reviews at `medium` effort and stops any single Claude call at $5; change these with `agent.effort` and `agent.maxBudgetUsd`. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release.
 
 Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own.
 

@@ -8,7 +8,7 @@ on:
         default: plan
       category:
         type: choice
-        options: [dependencies, security, bugs, architecture, simplify, performance]
+        options: [security, bugs, architecture, simplify]
         default: dependencies
       period:
         type: choice

@@ -259,9 +259,9 @@ test("configuration validates categories, checks and command boundaries", () => 
   expect(
     parseConfig({
       ...value,
-      repos: [{ name: "owner/repo", autoMerge: ["dependencies"] }],
+      repos: [{ name: "owner/repo", autoMerge: ["simplify"] }],
     }).repos[0]?.autoMerge,
-  ).toEqual(["dependencies"]);
+  ).toEqual(["simplify"]);
   expect(() =>
     parseConfig({
       ...value,
@@ -269,11 +269,30 @@ test("configuration validates categories, checks and command boundaries", () => 
         {
           name: "owner/repo",
           categories: ["security"],
-          autoReady: ["dependencies"],
+          autoReady: ["bugs"],
         },
       ],
     }),
   ).toThrow("subsets");
+  // Removed scans drop out, so configs that still list them keep loading.
+  expect(
+    parseConfig({
+      ...value,
+      repos: [
+        {
+          name: "owner/repo",
+          categories: ["dependencies", "bugs", "performance"],
+          autoReady: ["dependencies", "performance"],
+        },
+      ],
+    }).repos[0],
+  ).toMatchObject({ categories: ["bugs"], autoReady: [] });
+  expect(() =>
+    parseConfig({
+      ...value,
+      repos: [{ name: "owner/repo", categories: ["performance"] }],
+    }),
+  ).toThrow("at least one category");
   for (const agent of [{}, { command: ["agent"] }])
     expect(() => parseConfig({ ...value, agent })).toThrow("{output}");
 });

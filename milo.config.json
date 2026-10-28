@@ -8,16 +8,8 @@
   "repos": [
     {
       "name": "zeistapp/milo",
-      "categories": [
-        "dependencies",
-        "security",
-        "bugs",
-        "architecture",
-        "simplify",
-        "performance"
-      ],
-      "autoReady": ["dependencies", "simplify", "performance"],
-      "autoMerge": ["dependencies", "simplify", "performance"]
+      "autoReady": ["simplify"],
+      "autoMerge": ["simplify"]
     }
   ]
 }
