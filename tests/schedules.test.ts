@@ -27,9 +27,16 @@ test("daily, weekly and monthly scans deduplicate at their actual cadence", () =
   expect(periodKey("week", new Date("2026-10-14"))).toBe("2026-W42");
   expect(periodKey("week", new Date("2021-01-01"))).toBe("2020-W53");
   expect(periodKey("month", new Date("2026-10-31"))).toBe("2026-10");
+  // A three-day window keeps one key for three consecutive days, then moves on.
+  const keys = ["2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28"].map(
+    (day) => periodKey("day", new Date(`${day}T23:00:00Z`), 3),
+  );
+  expect(new Set(keys.slice(0, 3)).size).toBe(1);
+  expect(keys[3]).toBe("2026-10-28");
+  expect(periodKey("week", new Date("2026-10-14"), 3)).toBe("2026-W42");
 });
 test("a dedicated task runner cannot consume another category or run reviews", async () => {
-  const issues = [ticket(1, "security"), ticket(2, "dependencies")];
+  const issues = [ticket(1, "security"), ticket(2, "simplify")];
   const gh: GitHubClient = {
     async api<T>(): Promise<T> {
       throw new Error("Unexpected API write");
@@ -48,14 +55,14 @@ test("a dedicated task runner cannot consume another category or run reviews", a
   const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   const reviews = spyOn(runner, "runReviews").mockResolvedValue(undefined);
-  await runner.runTasks(repo, "dependencies", "week");
+  await runner.runTasks(repo, "simplify", "week");
   expect(plan).toHaveBeenCalledWith(
-    { ...repo, categories: ["dependencies"] },
+    { ...repo, categories: ["simplify"] },
     true,
     "week",
   );
   expect(work).toHaveBeenCalledTimes(1);
-  expect(work).toHaveBeenCalledWith(repo, 2, "dependencies");
+  expect(work).toHaveBeenCalledWith(repo, 2, "simplify");
   expect(reviews).not.toHaveBeenCalled();
 });
 test("an unscoped task runner works the oldest approved ticket of any category, then scans every category", async () => {
@@ -90,9 +97,7 @@ test("an unscoped task runner works the oldest approved ticket of any category, 
 test("self maintenance includes the published runner repo without duplicating explicit configuration", () => {
   const explicit: Config = {
     ...config,
-    repos: [
-      { name: "owner/milo", categories: ["dependencies"], autoReady: [] },
-    ],
+    repos: [{ name: "owner/milo", categories: ["simplify"], autoReady: [] }],
   };
   expect(includeSelfRepo(explicit, "OWNER/milo")).toBe(explicit);
   expect(includeSelfRepo(config, "owner/milo").repos).toEqual([

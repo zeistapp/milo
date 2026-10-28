@@ -59,10 +59,20 @@ function week(date: Date): string {
   const first = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
   return `${day.getUTCFullYear()}-W${String(Math.ceil(((+day - +first) / 86400000 + 1) / 7)).padStart(2, "0")}`;
 }
-export function periodKey(period: Period, today = new Date()): string {
+// Daily windows of more than one day count from the Unix epoch, so every run agrees on the window's first day.
+export function periodKey(
+  period: Period,
+  today = new Date(),
+  everyDays = 1,
+): string {
+  const window = 86400000 * everyDays;
   return period === "week"
     ? week(today)
-    : today.toISOString().slice(0, period === "day" ? 10 : 7);
+    : period === "day"
+      ? new Date(Math.floor(+today / window) * window)
+          .toISOString()
+          .slice(0, 10)
+      : today.toISOString().slice(0, 7);
 }
 // The category label's description records the last scan, so clean scans leave no issue behind.
 export const scannedNote = (key: string) => `Milo scanned ${key}`;

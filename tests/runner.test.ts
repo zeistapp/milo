@@ -122,8 +122,9 @@ await Bun.write(Bun.argv[2]!, !verify
     );
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
+    // Simplify scans every third day, so its label records the window's first day.
     expect(labels.get("milo:simplify")).toBe(
-      `Milo scanned ${periodKey("day")}`,
+      `Milo scanned ${periodKey("day", new Date(), 3)}`,
     );
     // Repeat runs in the same period, and categories with an open ticket, call no agent.
     let count = (await Bun.file(calls).text()).length;
@@ -485,7 +486,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       };
       const repo: Repo = {
         name: "owner/repo",
-        autoMerge: ["dependencies"],
+        autoMerge: ["simplify"],
         setup: [],
         checks: [
           {
@@ -513,8 +514,8 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
             closed.push(payload);
           else if (endpoint === "issues/12")
             result = {
-              ...issue("<!-- milo:dependencies:key -->"),
-              labels: [...issue().labels, { name: "milo:dependencies" }],
+              ...issue("<!-- milo:simplify:key -->"),
+              labels: [...issue().labels, { name: "milo:simplify" }],
             };
           else if (endpoint === "issues/13")
             result = { ...issue(), number: 13 };
@@ -614,7 +615,7 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       ).toBeTrue();
       // The reviewer judges scope against the approved ticket, not the PR description.
       expect(await Bun.file(reviewPrompt).text()).toContain(
-        "<!-- milo:dependencies:key -->",
+        "<!-- milo:simplify:key -->",
       );
       expect(await Bun.file(reviewPrompt).text()).toContain("Setup has run");
       const count = comments.length;
@@ -786,8 +787,8 @@ await Bun.write(Bun.argv[2]!, "Report");`,
 test("auto-merge gates on the ticket, then merges, updates or logs without stopping later PRs", async () => {
   const repo: Repo = {
     name: "owner/repo",
-    categories: ["dependencies"],
-    autoMerge: ["dependencies"],
+    categories: ["simplify"],
+    autoMerge: ["simplify"],
   };
   const pr: PullRequest = {
     number: 34,
@@ -805,7 +806,7 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
   let behind = 0;
   let refused = false;
   let open = [pr];
-  let ticket = { ...issue(), labels: [{ name: "milo:dependencies" }] };
+  let ticket = { ...issue(), labels: [{ name: "milo:simplify" }] };
   const writes: string[] = [];
   const gh: GitHubClient = {
     async api<T>(endpoint: string, method = "GET"): Promise<T> {
@@ -861,7 +862,7 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
   // Only a labelled category the repo allows, on a trusted author's ticket, merges.
   expect(await logged({ ...repo, autoMerge: [] })).toEqual([]);
   const labelled = ticket;
-  ticket = issue("<!-- milo:dependencies:key -->");
+  ticket = issue("<!-- milo:simplify:key -->");
   expect(await logged()).toEqual([]);
   ticket = { ...labelled, user: { login: "stranger" } };
   expect(await logged()).toEqual([]);

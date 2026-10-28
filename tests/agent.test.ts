@@ -26,6 +26,13 @@ test("provider configuration validates model selection and preserves custom agen
     { command: ["cli", "{output}"], model: "model" },
     { command: ["cli", "{output}"], scanModel: "model" },
     { provider: "claude", scanModel: "--help" },
+    { provider: "claude", effort: "extreme" },
+    ...[0, -1, "5"].map((maxBudgetUsd) => ({
+      provider: "claude",
+      maxBudgetUsd,
+    })),
+    { command: ["cli", "{output}"], effort: "low" },
+    { command: ["cli", "{output}"], maxBudgetUsd: 1 },
   ])
     expect(() => parseConfig({ agent, repos })).toThrow();
   expect(
@@ -45,8 +52,20 @@ test("Claude reviews get a sandboxed shell but no writes; edits require a shell 
   expect(readonlySettings.sandbox.enabled).toBe(true);
   expect(readonlySettings.sandbox.filesystem.denyWrite).toEqual(["/repo"]);
   expect(readonlySettings.sandbox.filesystem.allowWrite).toEqual(["/scratch"]);
-  const editing = claudeCommand("/repo", "/scratch", false, "exact-model");
-  expect(editing.slice(-2)).toEqual(["--model", "exact-model"]);
+  const editing = claudeCommand("/repo", "/scratch", false, {
+    model: "exact-model",
+    effort: "medium",
+    maxBudgetUsd: 2.5,
+  });
+  expect(editing.slice(-6)).toEqual([
+    "--effort",
+    "medium",
+    "--max-budget-usd",
+    "2.5",
+    "--model",
+    "exact-model",
+  ]);
+  expect(readonly).not.toContain("--effort");
   expect(editing[editing.indexOf("--allowedTools") + 1]).toContain("Bash");
   expect(readonly[readonly.indexOf("--allowedTools") + 1]).not.toContain(
     "Edit",
@@ -107,7 +126,7 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       process.env.ANTHROPIC_API_KEY = "fake-anthropic-secret";
       const config = (provider: string) =>
         parseConfig({
-          agent: { provider, model: "exact-model" },
+          agent: { provider, model: "exact-model", scanModel: "scan-model" },
           repos: [{ name: "owner/repo" }],
         });
       expect(await runAgent(config("claude"), root, "Review this", true)).toBe(
@@ -134,11 +153,20 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       expect(
         JSON.parse(invocation.settings).sandbox.filesystem.allowWrite,
       ).toEqual([home]);
-      expect(invocation.args.slice(-2)).toEqual(["--model", "exact-model"]);
-      await runAgent(config("claude"), root, "Scan this", true, "scan-model");
+      // Unconfigured effort and budget default to medium and $5 per call.
+      expect(invocation.args.slice(-6)).toEqual([
+        "--effort",
+        "medium",
+        "--max-budget-usd",
+        "5",
+        "--model",
+        "exact-model",
+      ]);
+      // Scans use scanModel at the CLI's default effort, still under the budget.
+      await runAgent(config("claude"), root, "Scan this", true, true);
       expect(
-        (await Bun.file(join(root, "invocation.json")).json()).args.slice(-2),
-      ).toEqual(["--model", "scan-model"]);
+        (await Bun.file(join(root, "invocation.json")).json()).args.slice(-4),
+      ).toEqual(["--max-budget-usd", "5", "--model", "scan-model"]);
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
       );

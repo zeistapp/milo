@@ -11,6 +11,7 @@ import {
   parse,
   type Repo,
   type Step,
+  scanEveryDays,
 } from "./config.ts";
 import {
   author,
@@ -112,7 +113,7 @@ export async function runAgent(
   root: string,
   prompt: string,
   readOnly = false,
-  model = config.agent.model,
+  scan = false,
 ): Promise<string> {
   return temporary("milo-report-", async (folder) => {
     const output = join(folder, "report.txt");
@@ -125,7 +126,11 @@ export async function runAgent(
           await workHome(root),
           input,
           readOnly,
-          model,
+          {
+            model: (scan && config.agent.scanModel) || config.agent.model,
+            effort: scan ? undefined : (config.agent.effort ?? "medium"),
+            maxBudgetUsd: config.agent.maxBudgetUsd ?? 5,
+          },
           config.agent.timeoutSeconds,
         ),
       );
@@ -168,7 +173,6 @@ export class Runner {
     period: Period = "week",
   ): Promise<void> {
     const gh = this.github(repo);
-    const key = periodKey(period);
     const selected = repo.categories ?? categoryNames;
     const existing = new Map(
       parse(
@@ -191,6 +195,7 @@ export class Runner {
     const open = work.filter((issue) => !Object.hasOwn(issue, "pull_request"));
     for (const category of selected) {
       const label = `milo:${category}`;
+      const key = periodKey(period, new Date(), scanEveryDays[category]);
       // One outstanding ticket per category: triage or finish it before Milo looks again.
       if (
         existing.get(label) === scannedNote(key) ||
@@ -254,7 +259,7 @@ export class Runner {
           "Otherwise make the first line exactly `Title: <short imperative summary>`, then give the evidence, the proposed change and acceptance criteria.\n" +
           projectContext(await inspectProject(root, repo)),
         true,
-        this.config.agent.scanModel,
+        true,
       );
       await workspace.assertUnchanged();
       const found = finding(report);
