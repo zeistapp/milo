@@ -21,7 +21,18 @@ export const labels = {
   "milo:ready": "16a34a",
   "milo:blocked": "dc2626",
 };
-const branchPattern = /^milo\/issue-[1-9][0-9]*$/;
+const taskBranchPrefix = "milo/issue-";
+// Ticket N is worked on, and its PR opened from, this branch.
+export const taskBranch = (ticket: number) => `${taskBranchPrefix}${ticket}`;
+// The ticket a task branch belongs to, or undefined for any other ref.
+export function ticketNumber(ref: string): number | undefined {
+  if (!ref.startsWith(taskBranchPrefix)) return;
+  const digits = ref.slice(taskBranchPrefix.length);
+  const ticket = Number(digits);
+  return /^[1-9][0-9]*$/.test(digits) && Number.isSafeInteger(ticket)
+    ? ticket
+    : undefined;
+}
 
 // Markers lead a bot comment, so report text after them cannot forge one.
 export const reviewStamp = (sha: string, mark?: "merge" | "fix") =>
@@ -116,7 +127,7 @@ export function validatePR(pr: PullRequest, repo: Repo): void {
   if (
     pr.state !== "open" ||
     pr.head.repo?.full_name.toLowerCase() !== repo.name.toLowerCase() ||
-    !branchPattern.test(pr.head.ref)
+    ticketNumber(pr.head.ref) === undefined
   ) {
     throw new Error(
       "Only open Milo PRs from the configured repository are supported",

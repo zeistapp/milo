@@ -224,6 +224,53 @@ test("only tickets written by Milo or a repository writer run", async () => {
     work.mockRestore();
   }
 });
+test("a ticket that already has a PR is skipped for the next ticket", async () => {
+  const tickets = [
+    { ...issue(), number: 3 },
+    { ...issue(), number: 4 },
+  ];
+  const gh: GitHubClient = {
+    async api<T>(endpoint: string): Promise<T> {
+      const ticket = tickets.find(
+        (item) => endpoint === `issues/${item.number}`,
+      );
+      if (ticket) return ticket as T;
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      if (endpoint.startsWith("issues?")) return tickets as T[];
+      if (endpoint === "pulls?state=all&head=owner:milo/issue-3")
+        return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
+      return [];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+    async () => {
+      throw new Error("Unexpected clone");
+    },
+  );
+  const repo = { name: "owner/repo" };
+  // work() itself stops before cloning when the PR exists.
+  await runner.work(repo, 3);
+  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const work = spyOn(runner, "work").mockResolvedValue(undefined);
+  try {
+    await runner.runTasks(repo);
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(work).toHaveBeenCalledWith(repo, 4, undefined);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
 test("child processes lose GitHub credentials and time out", async () => {
   const github = [
     "GH_TOKEN",
