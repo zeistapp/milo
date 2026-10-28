@@ -61,6 +61,8 @@ import {
   reviewOutcome,
   reviewStamp,
   scannedNote,
+  taskBranch,
+  ticketNumber,
   ticketStamp,
   validateIssue,
   validatePR,
@@ -363,14 +365,8 @@ export class Runner {
       )
         throw new Error("Ticket changed during execution");
     };
-    const branch = `milo/issue-${number}`;
-    const prs = parse(
-      z.array(Link),
-      await gh.pages(
-        `pulls?state=all&head=${repo.name.split("/")[0]}:${branch}`,
-      ),
-    );
-    const existing = prs[0];
+    const branch = taskBranch(number);
+    const existing = await this.existingPr(gh, repo, number);
     if (existing) {
       console.log(`Ticket already has a PR: ${existing.html_url}`);
       return;
@@ -502,10 +498,17 @@ export class Runner {
       .map((comment) => comment.body);
   }
   private async ticket(gh: GitHubClient, pr: PullRequest): Promise<Issue> {
-    return parse(
-      Issue,
-      await gh.api(`issues/${pr.head.ref.slice("milo/issue-".length)}`),
+    return parse(Issue, await gh.api(`issues/${ticketNumber(pr.head.ref)}`));
+  }
+  // Any PR, open or closed, from the ticket's branch.
+  private async existingPr(gh: GitHubClient, repo: Repo, ticket: number) {
+    const prs = parse(
+      z.array(Link),
+      await gh.pages(
+        `pulls?state=all&head=${repo.name.split("/")[0]}:${taskBranch(ticket)}`,
+      ),
     );
+    return prs[0];
   }
   private async autoMergeCategory(
     gh: GitHubClient,
@@ -782,15 +785,7 @@ export class Runner {
       }
       if (category && issueCategory(issue) !== category) continue;
       if (!(await trustedAuthor(gh, issue))) continue;
-      const branch = `milo/issue-${issue.number}`;
-      if (
-        (
-          await gh.pages(
-            `pulls?state=all&head=${repo.name.split("/")[0]}:${branch}`,
-          )
-        ).length
-      )
-        continue;
+      if (await this.existingPr(gh, repo, issue.number)) continue;
       await this.work(repo, issue.number, category);
       break;
     }

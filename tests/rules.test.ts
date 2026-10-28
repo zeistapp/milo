@@ -26,6 +26,8 @@ import {
   reviewed,
   reviewOutcome,
   reviewStamp,
+  taskBranch,
+  ticketNumber,
   validateIssue,
   validatePR,
 } from "../src/rules.ts";
@@ -119,6 +121,21 @@ test("only approved tickets and same-repo Milo PRs may run", () => {
   expect(() =>
     validatePR({ ...pr, state: "closed" }, { name: "owner/repo" }),
   ).toThrow();
+});
+test("a task branch names exactly one ticket", () => {
+  for (const ticket of [1, 12, Number.MAX_SAFE_INTEGER])
+    expect(ticketNumber(taskBranch(ticket))).toBe(ticket);
+  for (const ref of [
+    "feature/x",
+    "milo/issue-",
+    "milo/issue-0",
+    "milo/issue-012",
+    "milo/issue-12x",
+    "milo/issue-1e3",
+    "milo/issue-99999999999999999999",
+    "refs/heads/milo/issue-12",
+  ])
+    expect(ticketNumber(ref)).toBeUndefined();
 });
 test("review revisions use the current effective review on the current commit", () => {
   const request: Review = {
