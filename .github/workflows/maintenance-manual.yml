@@ -9,7 +9,7 @@ on:
       category:
         type: choice
         options: [security, bugs, architecture, simplify]
-        default: dependencies
+        default: security
       period:
         type: choice
         options: [day, week, month]
