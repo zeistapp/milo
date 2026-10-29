@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { sandboxEnv, temporary, workHome } from "../src/process.ts";
+import { ScanResult } from "../src/rules.ts";
 import { runAgent } from "../src/runner.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
@@ -187,6 +188,61 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       expect(
         (await Bun.file(join(root, "invocation.json")).json()).args,
       ).toContain("workspace-write");
+      // With a schema, Claude gets --json-schema and Milo validates its structured output.
+      const success = { type: "result", subtype: "success", is_error: false };
+      const clean = { clean: true, title: "", body: "" };
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        ...success,
+        result: "ignored",
+        structured_output: clean,
+      });
+      expect(
+        await runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+      ).toEqual(clean);
+      const { args } = await Bun.file(join(root, "invocation.json")).json();
+      expect(JSON.parse(args[args.indexOf("--json-schema") + 1])).toMatchObject(
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          required: ["clean", "title", "body"],
+        },
+      );
+      // Claude repairs invalid output in-session; once it gives up, the run fails with its label.
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        type: "result",
+        subtype: "error_max_structured_output_retries",
+        is_error: true,
+      });
+      await expect(
+        runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+      ).rejects.toThrow("error_max_structured_output_retries");
+      process.env.MILO_TEST_RESULT = JSON.stringify({
+        ...success,
+        result: "",
+        structured_output: { ...clean, clean: "yes" },
+      });
+      await expect(
+        runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+      ).rejects.toThrow("clean");
+      delete process.env.MILO_TEST_RESULT;
+      // A custom agent gets the schema's path and must write matching JSON.
+      const schemaArgs = parseConfig({
+        agent: {
+          command: [
+            join(root, "agent"),
+            "exec",
+            "{schema}",
+            "--output-last-message",
+            "{output}",
+          ],
+        },
+        repos: [{ name: "owner/repo" }],
+      });
+      await expect(
+        runAgent(schemaArgs, root, "Scan", true, true, ScanResult),
+      ).rejects.toThrow("not JSON");
+      expect(
+        (await Bun.file(join(root, "invocation.json")).json()).args[1],
+      ).toEndWith("schema.json");
       // The default fake version above is exactly the floor and was accepted.
       const [major = 0, minor = 0, patch = 0] = minimumClaudeVersion
         .split(".")

@@ -47,9 +47,10 @@ const log = Bun.file(${JSON.stringify(calls)});
 await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
 const verify = prompt.includes("A scan raised the ticket below");
 if (verify) await Bun.write(${JSON.stringify(verifyPrompt)}, prompt);
+const result = (clean, title, body, ready) => JSON.stringify({ clean, title, body, ...(verify ? { ready } : {}) });
 await Bun.write(Bun.argv[2]!, !verify
-  ? prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Title: Inline a helper\\nEvidence"
-  : prompt.includes("Patch hono") ? "Title: Patch hono\\nReproduced\\nReady: yes" : "Already handled\\nVerdict: clean");`,
+  ? prompt.includes("for security work") ? result(false, "Patch hono", "Evidence") : result(false, "Inline a helper", "Evidence")
+  : prompt.includes("Patch hono") ? result(false, "Patch hono", "Reproduced", true) : result(true, "", "Already handled", false));`,
     );
     const labels = new Map<string, string | null>();
     const open: Issue[] = [];
@@ -120,9 +121,8 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(await Bun.file(verifyPrompt).text()).toContain(
       "Open tickets and PRs",
     );
-    // autoReady is empty, so the verifier's Ready line approved it.
+    // autoReady is empty, so the verifier's ready field approved it.
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
-    expect(ticket.body).not.toContain("Ready: yes");
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
     // Simplify scans every third day, so its label records the window's first day.
     expect(labels.get("milo:simplify")).toBe(
@@ -527,7 +527,9 @@ if (prompt.includes("Implement this ticket:")) {
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
 if (prompt.includes("Fix these findings")) await Bun.write("file.txt", prompt.includes("Rename it") ? "fixed\\n" : "wrong\\n");
 if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
-await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
+await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
+  ? JSON.stringify({ verdict: "merge", reversibility: "two-way", blastRadius: "file.txt", body: "Report with evidence" })
+  : "Report with evidence");`,
       );
       const config: Config = {
         agent: { command: [process.execPath, fakeAgent, "{output}"] },
@@ -747,7 +749,9 @@ test("review and revise publish nothing when the PR head moves", () =>
 const prompt = await Bun.stdin.text();
 appendFileSync(${JSON.stringify(runs)}, "x");
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "revised\\n");
-await Bun.write(Bun.argv[2]!, "Report");`,
+await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
+  ? JSON.stringify({ verdict: "hold", reversibility: "two-way", blastRadius: "file.txt", body: "Report" })
+  : "Report");`,
     );
     // Each read of the PR takes the next head; the last one repeats.
     let heads: string[] = [];

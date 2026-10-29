@@ -87,27 +87,28 @@ export function periodKey(
 }
 // The category label's description records the last scan, so clean scans leave no issue behind.
 export const scannedNote = (key: string) => `Milo scanned ${key}`;
+// Agents return results as structured output, so text quoted from a diff or ticket cannot set a verdict.
+export const ScanResult = z.object({
+  clean: z.boolean(),
+  title: z.string(),
+  body: z.string(),
+});
+export const VerifiedResult = ScanResult.extend({ ready: z.boolean() });
+export const ReviewResult = z.object({
+  verdict: z.enum(["merge", "fix", "hold"]),
+  reversibility: z.enum(["two-way", "one-way"]),
+  blastRadius: z.string(),
+  body: z.string(),
+});
+export type ReviewResult = z.infer<typeof ReviewResult>;
 export function finding(
-  report: string,
+  result: z.infer<typeof ScanResult> & { ready?: boolean },
 ): { title: string; body: string; ready: boolean } | undefined {
-  // Models wrap these lines in markdown, narrate around them and put the verdict first, so tolerate all three.
-  if (/^[\s>#*_`]*verdict:[\s*_`]*clean[\s*_`.]*$/im.test(report)) return;
-  const match = /^[\s>#*_]*title:[*_]*[ \t]*(\S.*)$/im.exec(report);
-  if (!match?.[1])
-    throw new Error("Scan report has neither a title nor a verdict");
-  const readyLine = /^[\s>#*_`]*ready:[\s*_`]*(yes|no)\b[\s*_`.]*$/gim;
-  const answers = [...report.matchAll(readyLine)].map((line) =>
-    line[1]?.toLowerCase(),
-  );
-  return {
-    title: match[1].trim().slice(0, 200),
-    body: report
-      .slice(match.index + match[0].length)
-      .replace(readyLine, "")
-      .trim(),
-    // A contradictory report is not ready.
-    ready: answers.includes("yes") && !answers.includes("no"),
-  };
+  if (result.clean) return;
+  const title = result.title.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!title)
+    throw new Error("Scan result has neither a title nor a clean verdict");
+  return { title, body: result.body.trim(), ready: result.ready ?? false };
 }
 // Labels only: issue authors can edit the body, but labelling needs triage access.
 export function issueCategory(issue: Issue): Category | undefined {
@@ -214,23 +215,14 @@ export function mergeAction(facts: MergeFacts): MergeAction {
   if (facts.ci === "waiting") return { kind: "waiting" };
   return { kind: facts.behindBy ? "update-branch" : "merge" };
 }
-// Only the report's last line counts, so a verdict quoted from the diff or ticket cannot set it.
-export function reviewVerdict(report: string): "merge" | "fix" | "hold" {
-  const last = report.trim().split("\n").at(-1) ?? "";
-  const verdict = /^[\s>*_`]*verdict:[\s*_`]*(merge|fix)[\s*_`.]*$/i
-    .exec(last)?.[1]
-    ?.toLowerCase();
-  return verdict === "merge" || verdict === "fix" ? verdict : "hold";
-}
 // Turns the verdict into the review stamp's mark: fix queues a revision, merge queues an
-// auto-merge for an eligible PR that no deterministic limit blocks.
+// auto-merge for an eligible two-way-door PR that no deterministic limit blocks.
 export async function reviewOutcome(
-  report: string,
+  { verdict, reversibility, blastRadius }: ReviewResult,
   eligible: boolean,
   canFix: boolean,
   blocker: () => Promise<string | undefined>,
 ): Promise<{ mark?: "merge" | "fix"; note: string }> {
-  const verdict = reviewVerdict(report);
   if (verdict === "fix")
     return canFix
       ? { mark: "fix", note: "\n\nMilo fixes these findings next." }
@@ -238,7 +230,12 @@ export async function reviewOutcome(
           note: "\n\nMilo has used its automatic fixes on this PR; a human must address these findings.",
         };
   if (!eligible) return { note: "" };
-  const held = verdict === "merge" ? await blocker() : "review verdict";
+  const held =
+    verdict !== "merge"
+      ? "review verdict"
+      : reversibility === "one-way"
+        ? `one-way door: ${blastRadius.split("\n")[0]?.trim()}`
+        : await blocker();
   return held
     ? { note: `\n\nAuto-merge held (${held}); a human must review this PR.` }
     : {

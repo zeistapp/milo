@@ -24,6 +24,8 @@ const Result = z.object({
   subtype: z.literal("success"),
   is_error: z.literal(false),
   result: z.string(),
+  // Present when the call passed --json-schema; Claude validates it and retries in-session first.
+  structured_output: z.unknown().optional(),
   permission_denials: z.array(Denial).catch([]),
 });
 // Any result, successful or not, for its cost and the reason it stopped.
@@ -50,12 +52,14 @@ function stopReason({ subtype, result }: z.infer<typeof Outcome>): string {
   return label ? `: ${label}` : "";
 }
 
-type Flags = Pick<Agent, "model" | "effort" | "maxBudgetUsd">;
+type Flags = Pick<Agent, "model" | "effort" | "maxBudgetUsd"> & {
+  jsonSchema?: string;
+};
 export function claudeCommand(
   root: string,
   home: string,
   readOnly: boolean,
-  { model, effort, maxBudgetUsd }: Flags = {},
+  { model, effort, maxBudgetUsd, jsonSchema }: Flags = {},
 ): Argv {
   // Read-only runs keep a sandboxed shell for searching, git history and registry lookups.
   const tools = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "Bash"];
@@ -110,6 +114,7 @@ export function claudeCommand(
     ...(effort ? ["--effort", effort] : []),
     ...(maxBudgetUsd ? ["--max-budget-usd", String(maxBudgetUsd)] : []),
     ...(model ? ["--model", model] : []),
+    ...(jsonSchema ? ["--json-schema", jsonSchema] : []),
   ];
 }
 
@@ -165,7 +170,11 @@ export async function runClaude(
     throw new Error(
       `Claude did not complete successfully${stopReason(outcome)}`,
     );
-  const { result, permission_denials: denials } = response.data;
+  const {
+    result,
+    structured_output: structured,
+    permission_denials: denials,
+  } = response.data;
   if (denials.length) {
     // Report only fixed labels, never agent-supplied arguments, paths or secrets.
     const details = new Set(
@@ -202,5 +211,5 @@ export async function runClaude(
       `Claude encountered denied permissions: ${[...details].join(", ")}; task needs human attention`,
     );
   }
-  return result;
+  return flags.jsonSchema ? JSON.stringify(structured ?? null) : result;
 }
