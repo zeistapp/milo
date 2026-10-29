@@ -3,6 +3,7 @@
     "provider": "claude",
     "model": "claude-opus-5-5",
     "scanModel": "claude-sonnet-5-5",
+    "reviewModel": "claude-sonnet-5-5",
     "timeoutSeconds": 1800
   },
   "repos": [

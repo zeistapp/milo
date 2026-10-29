@@ -6,7 +6,7 @@
 
 **Status:** done in 2f90d10
 
-Milo's own `milo.config.json` leaves `reviewModel` unset.
+Milo's own `milo.config.json` reviews with Claude Sonnet 5.5: a different model from the Opus 5.5 implementer at half its per-token price. Fable 5.1 was rejected on cost (2.5x Opus 5.5).
 - [x] `agent.reviewModel` is accepted by the config schema and used only for PR reviews
 - [x] Without it, reviews use `agent.model` as today
 - [x] The usage docs describe it
