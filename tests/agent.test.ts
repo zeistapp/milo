@@ -27,6 +27,8 @@ test("provider configuration validates model selection and preserves custom agen
     { command: ["cli", "{output}"], model: "model" },
     { command: ["cli", "{output}"], scanModel: "model" },
     { provider: "claude", scanModel: "--help" },
+    { command: ["cli", "{output}"], reviewModel: "model" },
+    { provider: "claude", reviewModel: "--help" },
     { provider: "claude", effort: "extreme" },
     ...[0, -1, "5"].map((maxBudgetUsd) => ({
       provider: "claude",
@@ -127,7 +129,12 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       process.env.ANTHROPIC_API_KEY = "fake-anthropic-secret";
       const config = (provider: string) =>
         parseConfig({
-          agent: { provider, model: "exact-model", scanModel: "scan-model" },
+          agent: {
+            provider,
+            model: "exact-model",
+            scanModel: "scan-model",
+            reviewModel: "review-model",
+          },
           repos: [{ name: "owner/repo" }],
         });
       expect(await runAgent(config("claude"), root, "Review this", true)).toBe(
@@ -164,10 +171,24 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         "exact-model",
       ]);
       // Scans use scanModel at the CLI's default effort, still under the budget.
-      await runAgent(config("claude"), root, "Scan this", true, true);
+      await runAgent(config("claude"), root, "Scan this", true, "scan");
       expect(
         (await Bun.file(join(root, "invocation.json")).json()).args.slice(-4),
       ).toEqual(["--max-budget-usd", "5", "--model", "scan-model"]);
+      // PR reviews use reviewModel at the configured effort; without it, they use model.
+      const lastModel = async () =>
+        (await Bun.file(join(root, "invocation.json")).json()).args.at(-1);
+      await runAgent(config("claude"), root, "Review", true, "review");
+      expect(await lastModel()).toBe("review-model");
+      const { reviewModel: _, ...agent } = config("claude").agent;
+      await runAgent(
+        { ...config("claude"), agent },
+        root,
+        "Review",
+        true,
+        "review",
+      );
+      expect(await lastModel()).toBe("exact-model");
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
       );
@@ -197,7 +218,14 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         structured_output: clean,
       });
       expect(
-        await runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+        await runAgent(
+          config("claude"),
+          root,
+          "Scan",
+          true,
+          "scan",
+          ScanResult,
+        ),
       ).toEqual(clean);
       const { args } = await Bun.file(join(root, "invocation.json")).json();
       expect(JSON.parse(args[args.indexOf("--json-schema") + 1])).toMatchObject(
@@ -213,7 +241,7 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         is_error: true,
       });
       await expect(
-        runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+        runAgent(config("claude"), root, "Scan", true, "scan", ScanResult),
       ).rejects.toThrow("error_max_structured_output_retries");
       process.env.MILO_TEST_RESULT = JSON.stringify({
         ...success,
@@ -221,7 +249,7 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         structured_output: { ...clean, clean: "yes" },
       });
       await expect(
-        runAgent(config("claude"), root, "Scan", true, true, ScanResult),
+        runAgent(config("claude"), root, "Scan", true, "scan", ScanResult),
       ).rejects.toThrow("clean");
       delete process.env.MILO_TEST_RESULT;
       // A custom agent gets the schema's path and must write matching JSON.
@@ -238,7 +266,7 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         repos: [{ name: "owner/repo" }],
       });
       await expect(
-        runAgent(schemaArgs, root, "Scan", true, true, ScanResult),
+        runAgent(schemaArgs, root, "Scan", true, "scan", ScanResult),
       ).rejects.toThrow("not JSON");
       expect(
         (await Bun.file(join(root, "invocation.json")).json()).args[1],

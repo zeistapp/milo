@@ -93,7 +93,7 @@ jobs:
 
 ## Agents, models and credentials
 
-Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.scanModel`:
+Set `agent.provider` to `claude` and optionally choose `agent.model`, `agent.scanModel` and `agent.reviewModel`:
 
 ```json
 {
@@ -101,6 +101,7 @@ Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.
     "provider": "claude",
     "model": "MODEL_ID",
     "scanModel": "SCAN_MODEL_ID",
+    "reviewModel": "REVIEW_MODEL_ID",
     "effort": "medium",
     "maxBudgetUsd": 5,
     "timeoutSeconds": 1800
@@ -109,7 +110,7 @@ Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.
 }
 ```
 
-Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. `scanModel` applies only to read-only scans, which run once per category, so a cheaper model there cuts most of the cost; omit it to scan with `model`. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. `effort` sets `--effort` for edits, verification and reviews (`low`, `medium`, `high`, `xhigh` or `max`; default `medium`); scans keep the CLI's default. `maxBudgetUsd` sets `--max-budget-usd` on every Claude call (default 5). A call that hits it fails, and a ticket that fails is labelled `milo:blocked` rather than retried. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
+Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. `scanModel` applies only to read-only scans, which run once per category, so a cheaper model there cuts most of the cost; omit it to scan with `model`. `reviewModel` applies only to PR reviews. A model other than the one that wrote the change is less likely to share its blind spots, and its verdict gates `autoMerge`; omit it to review with `model`. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. `effort` sets `--effort` for edits, verification and reviews (`low`, `medium`, `high`, `xhigh` or `max`; default `medium`); scans keep the CLI's default. `maxBudgetUsd` sets `--max-budget-usd` on every Claude call (default 5). A call that hits it fails, and a ticket that fails is labelled `milo:blocked` rather than retried. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
 
 Add the `ANTHROPIC_API_KEY` secret to the `maintenance` environment. The action's `claude-version` input takes an exact version, 2.1.296+; the shared workflow defaults to Milo's tested version, and an optional `CLAUDE_VERSION` variable overrides it. Configs with a custom `agent.command` install nothing. CLI version and model version are separate choices. Milo's Claude adapter uses bare mode and requires API authentication rather than a subscription login.
 

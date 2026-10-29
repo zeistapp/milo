@@ -137,6 +137,8 @@ const Agent = z
     model: Model("agent.model"),
     // Scans are read-only and run once per category, so a cheaper model often suffices.
     scanModel: Model("agent.scanModel"),
+    // A different model from the implementer's is less likely to share its blind spots.
+    reviewModel: Model("agent.reviewModel"),
     // Edits, verification and reviews; scans keep the CLI's default effort.
     effort: z
       .enum(["low", "medium", "high", "xhigh", "max"], {
@@ -167,9 +169,13 @@ const Agent = z
   .refine(
     ({ provider, ...flags }) =>
       provider ||
-      [flags.model, flags.scanModel, flags.effort, flags.maxBudgetUsd].every(
-        (flag) => flag === undefined,
-      ),
+      [
+        flags.model,
+        flags.scanModel,
+        flags.reviewModel,
+        flags.effort,
+        flags.maxBudgetUsd,
+      ].every((flag) => flag === undefined),
     "Set model flags in a custom agent.command, or use agent.provider",
   );
 export type Agent = z.infer<typeof Agent>;
