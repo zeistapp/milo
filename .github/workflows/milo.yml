@@ -1,7 +1,7 @@
 name: Milo
 on:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: "23 */6 * * *"
   workflow_dispatch:
 permissions:
   contents: read

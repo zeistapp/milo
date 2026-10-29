@@ -8,18 +8,17 @@ It runs in GitHub Actions. No server or local daemon is needed. Vite, Astro, Rea
 
 Every six hours Milo works the oldest approved ticket and reviews open Milo PRs. Once a day it scans for security, bugs and architecture, and every third day for simplify. Each scan stays in its own area:
 
-| Task | What it does |
-| --- | --- |
-| Security | Reviews authentication, authorisation, injection, secret handling and data crossing trust boundaries, and shows the exploit path. |
-| Bugs | Finds behaviour that is wrong today: unhandled edge cases, races and stuck state. Each fix comes with a test that fails before it. |
-| Architecture | Starts from recent hot spots and proposes one change that makes modules deeper and easier to test. |
-| Simplify | Makes code shorter and clearer without changing behaviour: removes dead code and duplication, and uses modern native features. |
-| PR reviews | Reviews each commit on Milo's PRs by running the code, fixes what the review finds (up to twice per PR), and addresses **Changes requested** reviews from repository writers. |
+| Task         | What it does                                                                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Security     | Reviews authentication, authorisation, injection, secret handling and data crossing trust boundaries, and shows the exploit path.                                             |
+| Bugs         | Finds behaviour that is wrong today: unhandled edge cases, races and stuck state. Each fix comes with a test that fails before it.                                            |
+| Architecture | Starts from recent hot spots and proposes one change that makes modules deeper and easier to test.                                                                            |
+| Simplify     | Makes code shorter and clearer without changing behaviour: removes dead code and duplication, and uses modern native features.                                                |
+| PR reviews   | Reviews each commit on Milo's PRs by running the code, fixes what the review finds (up to twice per PR), and addresses **Changes requested** reviews from repository writers. |
 
 ## Set up your repo
 
 Use the public `zeistapp/milo` action from any GitHub repository.
-
 1. Add `milo.config.json`, replacing `YOUR_OWNER/YOUR_REPO`:
 
 ```json
@@ -39,7 +38,7 @@ Use the public `zeistapp/milo` action from any GitHub repository.
 name: Milo
 on:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: "23 */6 * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -59,7 +58,6 @@ Limit scans with `categories` in your config. Use [Dependabot](https://docs.gith
 ## Move an existing setup to automatic updates
 
 Older setups copied one workflow per task, so schedule changes, new tasks and action pins never reached them. Switch once and you won't need to edit workflows again.
-
 1. Delete your old Milo workflows: every file in `.github/workflows/` that uses `zeistapp/milo`.
 2. Add the `milo.yml` from step 3 above. If you still use a personal token, add `MILO_GITHUB_TOKEN: ${{ secrets.MILO_GITHUB_TOKEN }}` to its `secrets:` block, or [switch to the GitHub App](docs/usage.md#run-milo-as-a-github-app).
 3. Keep your `maintenance` environment, secrets and variables as they are. The `secrets:` block in `milo.yml` is required when your repo has a different owner from `zeistapp`: without it GitHub passes empty secrets.
