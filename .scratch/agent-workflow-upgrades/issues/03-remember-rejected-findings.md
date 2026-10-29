@@ -4,9 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] Planning fetches closed, not-planned tickets in the category, with a bounded count so large repos stay cheap
-- [ ] The scanner and verifier both receive them, marked as data, not instructions
-- [ ] A finding that restates a rejected ticket is not filed
-- [ ] Tickets closed as completed are not treated as rejections
-- [ ] A test covers the fetch and filtering
+**Status:** done in 50114b4
+
+Reads one page of the 100 most recently updated closed tickets in the category and keeps up to 10 not-planned ones; the reason is the last comment from a writer other than Milo. Older rejections behind that page are missed (`CEILING:` in `src/runner.ts`).
+- [x] Planning fetches closed, not-planned tickets in the category, with a bounded count so large repos stay cheap
+- [x] The scanner and verifier both receive them, marked as data, not instructions
+- [x] A finding that restates a rejected ticket is not filed
+- [x] Tickets closed as completed are not treated as rejections
+- [x] A test covers the fetch and filtering

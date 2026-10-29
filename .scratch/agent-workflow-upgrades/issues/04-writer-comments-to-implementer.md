@@ -4,8 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] The implement prompt includes writer and Milo comments, oldest first, marked as data
-- [ ] Comments from users without write access are excluded
-- [ ] A writer comment added mid-run stops the run before a PR opens
-- [ ] Tests cover writer, Milo and outside comments, and the mid-run case
+**Status:** done in 50114b4
+
+The permission endpoint answers `none` for bots and `read` for outsiders, so unknown commenters are excluded without failing the run. Any change to the trusted comments (new, edited or deleted) stops the run.
+- [x] The implement prompt includes writer and Milo comments, oldest first, marked as data
+- [x] Comments from users without write access are excluded
+- [x] A writer comment added mid-run stops the run before a PR opens
+- [x] Tests cover writer, Milo and outside comments, and the mid-run case

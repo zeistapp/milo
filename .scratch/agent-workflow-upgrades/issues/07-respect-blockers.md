@@ -4,9 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] A ready ticket with an open blocker is skipped and the next eligible ticket runs
-- [ ] A ticket whose blockers are all closed runs as normal
-- [ ] Repos or API responses without dependency data behave as today
-- [ ] A test covers blocked, unblocked and missing-data tickets
-- [ ] Confirm the dependency fields against GitHub's current REST issue response before relying on them
+**Status:** done in 50114b4
+
+List and single-issue responses carry `issue_dependencies_summary` (checked live on zeistapp/milo). GitHub's docs do not say whether `blocked_by` counts only open blockers, so Milo reads `issues/N/dependencies/blocked_by` and checks each state when `total_blocked_by` is non-zero.
+- [x] A ready ticket with an open blocker is skipped and the next eligible ticket runs
+- [x] A ticket whose blockers are all closed runs as normal
+- [x] Repos or API responses without dependency data behave as today
+- [x] A test covers blocked, unblocked and missing-data tickets
+- [x] Confirm the dependency fields against GitHub's current REST issue response before relying on them

@@ -34,7 +34,7 @@ Ship the tickets as five changes, in this order. A and B can run in parallel, th
 | D      | 05, 06, 10, 11 | All scan and review prompt rules. One pass keeps wording consistent. After A.                                                   |
 | E      | 09             | Small config option. Lands any time.                                                                                            |
 
-Done: A (f62e927), B (4cb3020). Next: C.
+Done: A (f62e927), B (4cb3020), C (50114b4). Next: D.
 
 Land B before C: 03 adds data to the scan and verifier prompts whose output instructions B rewrites.
 
