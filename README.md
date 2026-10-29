@@ -51,7 +51,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. Approve it by adding `milo:ready`; the next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
+4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. If its verifier reproduced the problem and found nothing for you to decide, the issue is already labelled `milo:ready`; otherwise approve it by adding the label. The next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
 Limit scans with `categories` in your config. Use [Dependabot](https://docs.github.com/en/code-security/dependabot) for dependency upgrades; Milo dropped its dependency and performance scans ([why](docs/adr/0001-remove-dependency-and-performance-scans.md)), and configs that still list them load without them. The retired names `cleanup` and `modernisation` still work as `simplify`, and `organisation` as `architecture`.
 

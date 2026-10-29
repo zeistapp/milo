@@ -89,15 +89,24 @@ export function periodKey(
 export const scannedNote = (key: string) => `Milo scanned ${key}`;
 export function finding(
   report: string,
-): { title: string; body: string } | undefined {
+): { title: string; body: string; ready: boolean } | undefined {
   // Models wrap these lines in markdown, narrate around them and put the verdict first, so tolerate all three.
   if (/^[\s>#*_`]*verdict:[\s*_`]*clean[\s*_`.]*$/im.test(report)) return;
   const match = /^[\s>#*_]*title:[*_]*[ \t]*(\S.*)$/im.exec(report);
   if (!match?.[1])
     throw new Error("Scan report has neither a title nor a verdict");
+  const readyLine = /^[\s>#*_`]*ready:[\s*_`]*(yes|no)\b[\s*_`.]*$/gim;
+  const answers = [...report.matchAll(readyLine)].map((line) =>
+    line[1]?.toLowerCase(),
+  );
   return {
     title: match[1].trim().slice(0, 200),
-    body: report.slice(match.index + match[0].length).trim(),
+    body: report
+      .slice(match.index + match[0].length)
+      .replace(readyLine, "")
+      .trim(),
+    // A contradictory report is not ready.
+    ready: answers.includes("yes") && !answers.includes("no"),
   };
 }
 // Labels only: issue authors can edit the body, but labelling needs triage access.
