@@ -119,6 +119,12 @@ export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
 }
 // Scans and PR reviews can run on their own models; every other call uses agent.model.
 type Kind = "scan" | "review" | undefined;
+// Milo's tested choices, used where the repo's config sets no model, so a change here reaches every repo.
+const defaultModels = {
+  edit: "claude-opus-5-5",
+  scan: "claude-sonnet-5-5",
+  review: "claude-sonnet-5-5",
+};
 // With a schema, the agent returns a validated object instead of a free-text report.
 export async function runAgent(
   config: Config,
@@ -163,7 +169,8 @@ export async function runAgent(
             model:
               (kind === "scan" && config.agent.scanModel) ||
               (kind === "review" && config.agent.reviewModel) ||
-              config.agent.model,
+              config.agent.model ||
+              defaultModels[kind ?? "edit"],
             effort:
               kind === "scan" ? undefined : (config.agent.effort ?? "medium"),
             maxBudgetUsd: config.agent.maxBudgetUsd ?? 5,

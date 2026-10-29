@@ -189,6 +189,19 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
         "review",
       );
       expect(await lastModel()).toBe("exact-model");
+      // With no models configured, Milo's defaults apply to each kind of call.
+      const bare = parseConfig({
+        agent: { provider: "claude" },
+        repos: [{ name: "owner/repo" }],
+      });
+      for (const [kind, model] of [
+        [undefined, "claude-opus-5-5"],
+        ["scan", "claude-sonnet-5-5"],
+        ["review", "claude-sonnet-5-5"],
+      ] as const) {
+        await runAgent(bare, root, "Run", true, kind);
+        expect(await lastModel()).toBe(model);
+      }
       expect(await runAgent(config("claude"), root, "Edit this")).toBe(
         "Claude report",
       );

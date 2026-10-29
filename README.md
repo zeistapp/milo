@@ -70,7 +70,7 @@ If a run fails, the run summary now shows the reason.
 
 ## Model
 
-Milo runs Claude Code. Choose the model in your config:
+Milo runs Claude Code and picks the models: Opus 5.5 for edits and verification, Sonnet 5.5 for scans and PR reviews. Leave models out of your config and your repo follows Milo's choices as they change. To override, set a model in your config:
 
 ```json
 {
@@ -79,7 +79,7 @@ Milo runs Claude Code. Choose the model in your config:
 }
 ```
 
-Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. Milo runs edits and reviews at `medium` effort and stops any single Claude call at $5; change these with `agent.effort` and `agent.maxBudgetUsd`. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release. Set `agent.scanModel` for cheaper scans and `agent.reviewModel` to review PRs with a different model from the one that wrote them ([details](docs/usage.md)).
+`model` replaces every default. Milo runs edits and reviews at `medium` effort and stops any single Claude call at $5; change these with `agent.effort` and `agent.maxBudgetUsd`. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release. Set `agent.scanModel` or `agent.reviewModel` to override only scans or only reviews ([details](docs/usage.md)).
 
 Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own.
 
