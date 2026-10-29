@@ -74,6 +74,7 @@ test("scan reports become a titled finding or nothing", () => {
   expect(finding("**Title:** Bump hono\n\nEvidence: package.json:3")).toEqual({
     title: "Bump hono",
     body: "Evidence: package.json:3",
+    ready: false,
   });
   for (const clean of [
     "Done.\n`Verdict: clean`",
@@ -86,8 +87,24 @@ test("scan reports become a titled finding or nothing", () => {
     finding(
       "I measured the routes.\n\n## Title: Index `created_at`\nBaseline: 2s",
     ),
-  ).toEqual({ title: "Index `created_at`", body: "Baseline: 2s" });
+  ).toEqual({
+    title: "Index `created_at`",
+    body: "Baseline: 2s",
+    ready: false,
+  });
   expect(() => finding("Some rambling report")).toThrow("verdict");
+  // The verifier's Ready line approves the ticket and is not filed with it.
+  expect(finding("Title: Fix race\nReproduced.\n\n**Ready:** yes")).toEqual({
+    title: "Fix race",
+    body: "Reproduced.",
+    ready: true,
+  });
+  for (const held of [
+    "Title: Fix race\nReady: no",
+    "Title: Fix race\nReady: yes\nReady: no",
+    "Title: Fix race\nAlready ready: yes, mostly",
+  ])
+    expect(finding(held)?.ready).toBe(false);
 });
 test("only approved tickets and same-repo Milo PRs may run", () => {
   validateIssue(issue());

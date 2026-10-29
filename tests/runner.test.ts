@@ -49,7 +49,7 @@ const verify = prompt.includes("A scan raised the ticket below");
 if (verify) await Bun.write(${JSON.stringify(verifyPrompt)}, prompt);
 await Bun.write(Bun.argv[2]!, !verify
   ? prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Title: Inline a helper\\nEvidence"
-  : prompt.includes("Patch hono") ? "Title: Patch hono\\nReproduced" : "Already handled\\nVerdict: clean");`,
+  : prompt.includes("Patch hono") ? "Title: Patch hono\\nReproduced\\nReady: yes" : "Already handled\\nVerdict: clean");`,
     );
     const labels = new Map<string, string | null>();
     const open: Issue[] = [];
@@ -100,7 +100,7 @@ await Bun.write(Bun.argv[2]!, !verify
     const repo: Repo = {
       name: "owner/repo",
       categories: ["security", "simplify"],
-      autoReady: ["security"],
+      autoReady: [],
       setup: [],
       checks: [{ command: ["true"] }],
     };
@@ -120,7 +120,9 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(await Bun.file(verifyPrompt).text()).toContain(
       "Open tickets and PRs",
     );
+    // autoReady is empty, so the verifier's Ready line approved it.
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
+    expect(ticket.body).not.toContain("Ready: yes");
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
     // Simplify scans every third day, so its label records the window's first day.
     expect(labels.get("milo:simplify")).toBe(
