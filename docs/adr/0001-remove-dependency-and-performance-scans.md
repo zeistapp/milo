@@ -23,13 +23,11 @@ The other scans did produce work. Over the same period they filed tickets that b
 ## What to try instead
 
 **Dependencies:** Dependabot handles routine upgrades. A Milo scan only earns its place if it does what Dependabot can't, such as:
-
 - moving packages released together (react and react-dom, for example) in one change
 - major upgrades that need code changes, with the migration done and tested
 
 Run it weekly or when Dependabot opens a major-version PR, not daily.
 
 **Performance:** the scan prompt required a baseline measurement, but these repos have nothing the agent can measure without editing files. Before adding it back:
-
 - give it a repeatable benchmark, or CI timing history, it can run read-only
 - trigger it on a measured regression (a slower test suite, build or bundle) rather than on a timer

@@ -8,15 +8,15 @@ Separate runners cover security, bugs, architecture, simplify and PR reviews. De
 
 Validation comes from existing package scripts, rather than a closed list of adapters. Framework detection gives the agent context. Unknown tools work when the repo provides runnable checks.
 
-| Project | Checks and review context |
-| --- | --- |
-| Vite, React, vanilla JS | Repo checks, tests and production builds |
-| Astro | Repo check/build scripts, islands and deployment adapters |
-| Next.js | Typechecks, lint, tests and builds; server/client boundaries |
-| Hono and other servers | Route and middleware tests, runtime bindings, auth and validation |
-| Vue, Nuxt, SvelteKit, Angular, Solid, TanStack Start and others | Repo scripts and dependency versions |
-| Libraries | Tests, builds, exports, peer dependencies and consumer compatibility |
-| Monorepos, Turborepo, Nx, custom pipelines | Package scripts or explicit aggregate commands |
+| Project                                                         | Checks and review context                                            |
+| --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Vite, React, vanilla JS                                         | Repo checks, tests and production builds                             |
+| Astro                                                           | Repo check/build scripts, islands and deployment adapters            |
+| Next.js                                                         | Typechecks, lint, tests and builds; server/client boundaries         |
+| Hono and other servers                                          | Route and middleware tests, runtime bindings, auth and validation    |
+| Vue, Nuxt, SvelteKit, Angular, Solid, TanStack Start and others | Repo scripts and dependency versions                                 |
+| Libraries                                                       | Tests, builds, exports, peer dependencies and consumer compatibility |
+| Monorepos, Turborepo, Nx, custom pipelines                      | Package scripts or explicit aggregate commands                       |
 
 Milo detects Bun, npm, pnpm and Yarn from lockfiles and `packageManager`. Frozen installs preserve the package manager. Its binary must be available on the runner. Milo running on Bun does not change the target application's runtime. Plain JS repos do not need TypeScript.
 
@@ -97,7 +97,14 @@ Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.
 
 ```json
 {
-  "agent": { "provider": "claude", "model": "MODEL_ID", "scanModel": "SCAN_MODEL_ID", "effort": "medium", "maxBudgetUsd": 5, "timeoutSeconds": 1800 },
+  "agent": {
+    "provider": "claude",
+    "model": "MODEL_ID",
+    "scanModel": "SCAN_MODEL_ID",
+    "effort": "medium",
+    "maxBudgetUsd": 5,
+    "timeoutSeconds": 1800
+  },
   "repos": [{ "name": "owner/product", "autoReady": [] }]
 }
 ```
@@ -117,7 +124,6 @@ Existing `agent.command` configs still work for custom agents. Choose either `pr
 ## Run Milo as a GitHub App
 
 With a personal token, Milo's issues and PRs show as you, so you can't approve its PRs, and the token expires. A GitHub App gives Milo its own `<app-name>[bot]` identity for issues, PRs, comments and commits, with tokens that renew on every run.
-
 1. [Register an App](https://github.com/settings/apps/new?url=https://github.com/zeistapp/milo&public=true&webhook_active=false&contents=write&issues=write&pull_requests=write&checks=read&statuses=read). The link fills in the permissions Milo needs: Contents, Issues and Pull requests write; Checks and Commit statuses read. Pick a name no GitHub user or App already has. For an organization, open the same link with `https://github.com/organizations/ORG/settings/apps/new` instead.
 2. On the App's settings page, note the Client ID. Then open **Credentials → Key pairs** in the left sidebar and click **New key** to download a private key.
 3. Install the App on every repo Milo maintains.
@@ -138,12 +144,12 @@ Push Milo to GitHub. Restrict a `maintenance` environment to the default branch 
 
 Consumers and Milo itself use the same two-line `milo.yml` caller, which runs every six hours and calls `consumer.yml`. That workflow calls the shared `maintenance.yml` once for tasks and once for reviews. Schedule, task list and action pins therefore update for every consumer through `@main`. The shared workflow selects `milo.config.json`, adds the calling repository as a target, and runs only on the default branch. Configured targets require ticket approval by default. Milo works any approved custom ticket written by a repository writer; it skips tickets from anyone else, because their authors could edit them after approval. Add a `milo:<category>` label if that category is in `autoMerge` and you want Milo to merge it.
 
-| Runner | Interval |
-| --- | --- |
-| Approved tickets, one per run | Every run (six hours) |
-| PR reviews, revisions and merges | Every run |
-| Security, bugs and architecture scans | Once per UTC day |
-| Simplify scans | Every third UTC day |
+| Runner                                | Interval              |
+| ------------------------------------- | --------------------- |
+| Approved tickets, one per run         | Every run (six hours) |
+| PR reviews, revisions and merges      | Every run             |
+| Security, bugs and architecture scans | Once per UTC day      |
+| Simplify scans                        | Every third UTC day   |
 
 The first run of each UTC day scans each due category in turn; the category label's description records the scan (`Milo scanned 2026-10-16`), so later runs that day skip it. Simplify's three-day windows count from the Unix epoch, so its label records the window's first day. A missed or late scheduled run just moves the scan to the next run. Milo also skips a category's scan while it has an open ticket, so triage or close findings to keep scans running. Categories a repo excludes through `categories` are skipped. Tasks share one concurrency group and reviews share another. The Manual maintenance workflow supports targeted tasks and individual issue/PR operations. To keep your own cron and periods instead, call `zeistapp/milo/.github/workflows/maintenance.yml@main` from your own workflows with `action`, `category` and `period`; those copies don't receive schedule changes.
 
@@ -154,7 +160,6 @@ Require target-repo CI and human approval through branch rules, dismissing stale
 ## Automatic merging
 
 List categories in a repo's `autoMerge` to let Milo merge their PRs without a human, for example `"autoReady": ["simplify"], "autoMerge": ["simplify"]`. Milo merges a PR only when all of these hold:
-
 - The reviewer agent ends its review with `Verdict: merge` (minor, non-breaking, in scope and tested).
 - The change is at most 300 lines outside lockfiles, has no binary files, and adds or removes no dependencies or package manifests.
 - Every changed dependency is a plain semver version and stays within its current major (or minor below 1.0).

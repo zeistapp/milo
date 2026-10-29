@@ -7,16 +7,16 @@ on:
         default: task
       category:
         type: string
-        default: ''
+        default: ""
       period:
         type: string
         default: week
       repo:
         type: string
-        default: ''
+        default: ""
       number:
         type: string
-        default: ''
+        default: ""
       config:
         type: string
         default: milo.config.json
@@ -61,7 +61,7 @@ jobs:
         env:
           CONFIG: ${{ inputs.config }}
           # Live-verified Claude Code release; set CLAUDE_VERSION to pin your own.
-          DEFAULT_CLAUDE_VERSION: '2.1.296'
+          DEFAULT_CLAUDE_VERSION: "2.1.296"
           CLAUDE_VERSION: ${{ vars.CLAUDE_VERSION }}
           MILO_GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.MILO_GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -84,7 +84,7 @@ jobs:
           number: ${{ inputs.number }}
           config: ${{ inputs.config }}
           self-repo: ${{ inputs.include-self && github.repository || '' }}
-          apply: 'true'
+          apply: "true"
           claude-version: ${{ steps.preflight.outputs.claude-version }}
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || secrets.MILO_GITHUB_TOKEN }}
