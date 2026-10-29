@@ -5,7 +5,6 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-
 - [ ] A ready ticket with an open blocker is skipped and the next eligible ticket runs
 - [ ] A ticket whose blockers are all closed runs as normal
 - [ ] Repos or API responses without dependency data behave as today

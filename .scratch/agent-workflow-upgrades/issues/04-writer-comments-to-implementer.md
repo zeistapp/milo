@@ -5,7 +5,6 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-
 - [ ] The implement prompt includes writer and Milo comments, oldest first, marked as data
 - [ ] Comments from users without write access are excluded
 - [ ] A writer comment added mid-run stops the run before a PR opens

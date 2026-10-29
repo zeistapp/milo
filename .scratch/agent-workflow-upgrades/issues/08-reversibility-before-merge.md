@@ -5,7 +5,6 @@
 **Blocked by:** 02
 
 **Status:** ready-for-agent
-
 - [ ] The review result carries a reversibility field and a blast-radius line
 - [ ] A one-way door, or a missing field, holds auto-merge with that reason in the review note
 - [ ] The deterministic merge blocker still applies on top

@@ -7,7 +7,6 @@ Before deleting a test, check it is not the last guard on a real rule; if it is,
 **Blocked by:** 01
 
 **Status:** ready-for-agent
-
 - [ ] The simplify area names the test bar and the five kinds of test that fail it
 - [ ] Simplify deletions keep the last guard on each real rule and keep regression tests
 - [ ] The review prompt flags new tests that fail the bar

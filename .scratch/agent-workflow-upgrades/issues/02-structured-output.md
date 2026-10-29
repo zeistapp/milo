@@ -9,7 +9,6 @@ The custom `agent.command` provider has no schema flag. Keep the text parsing fo
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-
 - [ ] Scan, verify and review results are parsed from a validated schema for the Claude provider
 - [ ] A malformed result triggers one in-session repair attempt before the run fails
 - [ ] Text parsing that only served the Claude provider is deleted

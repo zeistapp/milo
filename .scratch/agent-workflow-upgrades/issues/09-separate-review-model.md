@@ -5,7 +5,6 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-
 - [ ] `agent.reviewModel` is accepted by the config schema and used only for PR reviews
 - [ ] Without it, reviews use `agent.model` as today
 - [ ] The usage docs describe it

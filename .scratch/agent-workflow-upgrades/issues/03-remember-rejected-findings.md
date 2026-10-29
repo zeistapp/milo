@@ -5,7 +5,6 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-
 - [ ] Planning fetches closed, not-planned tickets in the category, with a bounded count so large repos stay cheap
 - [ ] The scanner and verifier both receive them, marked as data, not instructions
 - [ ] A finding that restates a rejected ticket is not filed

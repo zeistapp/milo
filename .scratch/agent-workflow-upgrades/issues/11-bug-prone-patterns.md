@@ -1,7 +1,6 @@
 # 11: Look for bug-prone patterns in the bugs scan
 
 **What to build:** Give the bugs scan a short list of patterns that often hide real defects, taken from Matt's coding standards:
-
 - a `switch` over a union whose `default` silently absorbs members added later;
 - a promise nobody awaits, handles or marks `void` with a reason, and async callbacks passed where nothing awaits them;
 - throwing a value that is not an `Error`;
@@ -16,7 +15,6 @@ Where the repo's linter already has a rule for a pattern, the proposed fix shoul
 **Blocked by:** 01
 
 **Status:** ready-for-agent
-
 - [ ] The bugs area lists the patterns as places to look, not as findings in themselves
 - [ ] Filed tickets from these patterns still show a failing input, trace or test
 - [ ] Rule names cited for Biome exist in the installed version
