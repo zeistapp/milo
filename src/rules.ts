@@ -93,7 +93,11 @@ export const ScanResult = z.object({
   title: z.string(),
   body: z.string(),
 });
-export const VerifiedResult = ScanResult.extend({ ready: z.boolean() });
+export const VerifiedResult = ScanResult.extend({
+  ready: z.boolean(),
+  // Open tickets that must close first; Milo files them as issue dependencies.
+  blockedBy: z.array(z.number().int()).default([]),
+});
 export const ReviewResult = z.object({
   verdict: z.enum(["merge", "fix", "hold"]),
   reversibility: z.enum(["two-way", "one-way"]),
@@ -101,15 +105,28 @@ export const ReviewResult = z.object({
   body: z.string(),
 });
 export type ReviewResult = z.infer<typeof ReviewResult>;
-export type Finding = { title: string; body: string; ready: boolean };
+export type Finding = {
+  title: string;
+  body: string;
+  ready: boolean;
+  blockedBy: number[];
+};
 export function finding(
-  result: z.infer<typeof ScanResult> & { ready?: boolean },
+  result: z.infer<typeof ScanResult> & {
+    ready?: boolean;
+    blockedBy?: number[];
+  },
 ): Finding | undefined {
   if (result.clean) return;
   const title = result.title.replace(/\s+/g, " ").trim().slice(0, 200);
   if (!title)
     throw new Error("Scan result has neither a title nor a clean verdict");
-  return { title, body: result.body.trim(), ready: result.ready ?? false };
+  return {
+    title,
+    body: result.body.trim(),
+    ready: result.ready ?? false,
+    blockedBy: result.blockedBy ?? [],
+  };
 }
 // One outstanding ticket per category: triage or finish it before Milo looks again.
 // `note` is the category label's description; `open` excludes PRs.
@@ -267,7 +284,7 @@ export async function reviewOutcome(
     verdict !== "merge"
       ? "review verdict"
       : reversibility === "one-way"
-        ? `one-way door: ${blastRadius.split("\n")[0]?.trim()}`
+        ? `one-way door; if this is wrong: ${blastRadius.split("\n")[0]?.trim()}`
         : await blocker();
   return held
     ? { note: `\n\nAuto-merge held (${held}); a human must review this PR.` }

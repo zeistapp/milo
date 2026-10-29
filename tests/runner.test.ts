@@ -48,13 +48,17 @@ const log = Bun.file(${JSON.stringify(calls)});
 await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
 const verify = prompt.includes("A scan raised the ticket below");
 await Bun.write(verify ? ${JSON.stringify(verifyPrompt)} : ${JSON.stringify(scanPrompt)}, prompt);
-const result = (clean, title, body, ready) => JSON.stringify({ clean, title, body, ...(verify ? { ready } : {}) });
+const result = (clean, title, body, ready) => JSON.stringify({ clean, title, body, ...(verify ? { ready, blockedBy: [30, 31, 99] } : {}) });
 await Bun.write(Bun.argv[2]!, !verify
   ? prompt.includes("for security work") ? result(false, "Patch hono", "Evidence") : result(false, "Inline a helper", "Evidence")
   : prompt.includes("Patch hono") ? result(false, "Patch hono", "Reproduced", true) : result(true, "", "Already handled", false));`,
     );
     const labels = new Map<string, string | null>();
-    const open: Issue[] = [];
+    // The verifier names open ticket #30, PR #31 and closed #99 as blockers; only #30 can block.
+    const open: Issue[] = [
+      { ...issue(), number: 30, labels: [] },
+      { ...issue(), number: 31, labels: [], pull_request: {} },
+    ];
     const writes: [string, string, unknown][] = [];
     // Only a writer's not-planned close is a rejection; completed tickets and PRs are not.
     const closed = [
@@ -93,6 +97,7 @@ await Bun.write(Bun.argv[2]!, !verify
         const login = /^collaborators\/(.+)\/permission$/.exec(endpoint)?.[1];
         if (login)
           return { permission: login === "owner" ? "write" : "read" } as T;
+        if (endpoint === "issues/30") return { id: 3000 } as T;
         writes.push([method, endpoint, payload]);
         const body = payload as { name?: string; description?: string };
         if (endpoint === "labels" && body.name) labels.set(body.name, null);
@@ -101,7 +106,7 @@ await Bun.write(Bun.argv[2]!, !verify
             decodeURIComponent(endpoint.slice(7)),
             body.description ?? null,
           );
-        return { html_url: "https://example.test/issue/1" } as T;
+        return { html_url: "https://example.test/issue/1", number: 1 } as T;
       },
       async pages<T>(endpoint: string): Promise<T[]> {
         if (endpoint === "labels")
@@ -172,6 +177,11 @@ await Bun.write(Bun.argv[2]!, !verify
       ])
         expect(text).not.toContain(excluded);
     }
+    expect(
+      writes.filter(([, endpoint]) => endpoint.includes("dependencies")),
+    ).toEqual([
+      ["POST", "issues/1/dependencies/blocked_by", { issue_id: 3000 }],
+    ]);
     // autoReady is empty, so the verifier's ready field approved it.
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);

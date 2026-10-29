@@ -43,9 +43,9 @@ export function verifyPrompt(
     "- Reproduce the problem: run it, or write a failing test and run it. Say what you ran and what happened. If you cannot reproduce it, say exactly why.\n" +
     "- Check every file:line reference against this code, and find every affected call site.\n" +
     "- Check the proposed change fixes the root cause without breaking existing tests or behaviour, and covers the edge cases. Where the plan or acceptance criteria are wrong or incomplete, fix them in place.\n" +
-    "- Name any open ticket or PR below that overlaps or must land first.\n" +
+    "- Name any open ticket or PR below that overlaps or must land first. List each open ticket that must close first in `blockedBy` (for a PR, its ticket); Milo records them as issue dependencies and waits for them.\n" +
     "- Settle each open question yourself when a safe choice exists that is easy to undo later, and state it under **Assumptions**. List under **Open questions** only decisions that are hard to reverse or change what users see.\n" +
-    "- Set `ready` to true only if you reproduced the problem, every reference checks out, there are no open questions and nothing open must land first. Milo starts work on a ready ticket without waiting for a maintainer.\n" +
+    "- Set `ready` to true only if you reproduced the problem, every reference checks out, there are no open questions and nothing outside `blockedBy` must land first. Milo starts work on a ready ticket without waiting for a maintainer.\n" +
     "If the problem is not real, not important, already handled, or a rejected ticket below, set `clean` to true and explain why in `body`.\n" +
     "Otherwise set `clean` to false, `title` to a short imperative summary and `body` to the corrected ticket: the evidence, proposed change and acceptance criteria.\n" +
     "Only your output is filed, so it must stand alone: write the full, corrected plan, not corrections to it, and never refer to the original ticket or plan.\n" +
