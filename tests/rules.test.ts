@@ -23,11 +23,14 @@ import {
   mergeBlocker,
   mergeFacts,
   nextReviewStep,
+  ReviewResult,
   reviewed,
   reviewOutcome,
   reviewStamp,
+  ScanResult,
   taskBranch,
   ticketNumber,
+  VerifiedResult,
   validateIssue,
   validatePR,
 } from "../src/rules.ts";
@@ -69,42 +72,19 @@ test("retired categories map to their replacements in tickets and config", () =>
     }).repos[0]?.categories,
   ).toEqual(["simplify", "architecture"]);
 });
-test("scan reports become a titled finding or nothing", () => {
-  expect(finding("Looked everywhere.\nVerdict: clean")).toBeUndefined();
-  expect(finding("**Title:** Bump hono\n\nEvidence: package.json:3")).toEqual({
+test("scan results become a titled finding or nothing", () => {
+  const result = { clean: false, title: " Bump\nhono ", body: "Evidence\n" };
+  expect(finding({ ...result, clean: true })).toBeUndefined();
+  expect(finding(result)).toEqual({
     title: "Bump hono",
-    body: "Evidence: package.json:3",
+    body: "Evidence",
     ready: false,
   });
-  for (const clean of [
-    "Done.\n`Verdict: clean`",
-    "**Verdict:** clean.",
-    "## Verdict: clean",
-    "Verdict: clean\n\nI couldn't reach the npm registry, so I checked the lockfile.",
-  ])
-    expect(finding(clean)).toBeUndefined();
-  expect(
-    finding(
-      "I measured the routes.\n\n## Title: Index `created_at`\nBaseline: 2s",
-    ),
-  ).toEqual({
-    title: "Index `created_at`",
-    body: "Baseline: 2s",
-    ready: false,
-  });
-  expect(() => finding("Some rambling report")).toThrow("verdict");
-  // The verifier's Ready line approves the ticket and is not filed with it.
-  expect(finding("Title: Fix race\nReproduced.\n\n**Ready:** yes")).toEqual({
-    title: "Fix race",
-    body: "Reproduced.",
-    ready: true,
-  });
-  for (const held of [
-    "Title: Fix race\nReady: no",
-    "Title: Fix race\nReady: yes\nReady: no",
-    "Title: Fix race\nAlready ready: yes, mostly",
-  ])
-    expect(finding(held)?.ready).toBe(false);
+  expect(finding({ ...result, ready: true })?.ready).toBe(true);
+  expect(() => finding({ ...result, title: " " })).toThrow("title");
+  // Missing or mistyped fields fail validation instead of filing a ticket.
+  expect(VerifiedResult.safeParse(result).success).toBe(false);
+  expect(ScanResult.safeParse({ ...result, clean: "no" }).success).toBe(false);
 });
 test("only approved tickets and same-repo Milo PRs may run", () => {
   validateIssue(issue());
@@ -396,41 +376,67 @@ test("merge facts count every change request and read every page of check runs",
   });
 });
 
-test("review outcome fixes on a fix verdict and queues a merge only on an eligible merge verdict with no blocker", async () => {
+test("review outcome fixes on a fix verdict and queues a merge only on an eligible two-way merge verdict with no blocker", async () => {
   const none = async () => undefined;
   const lines = async () => "400 changed lines";
+  const review = (
+    verdict: ReviewResult["verdict"],
+    reversibility: ReviewResult["reversibility"] = "two-way",
+  ): ReviewResult => ({
+    verdict,
+    reversibility,
+    blastRadius: "Saved settings\nmore",
+    body: "Report",
+  });
   const cases: [
-    string,
+    ReviewResult,
     boolean,
     boolean,
     () => Promise<string | undefined>,
     "merge" | "fix" | undefined,
     string,
   ][] = [
-    ["Report\nVerdict: merge", true, true, none, "merge", "Auto-merge queued"],
-    ["Report\n  verdict: MERGE  ", true, true, none, "merge", "queued"],
-    // Models bold or quote the line; only its position matters.
-    ["Report\n**Verdict: merge**", true, true, none, "merge", "queued"],
-    ["Report\nVerdict: merge", true, true, lines, undefined, "(400 changed"],
-    ["Report\nVerdict: hold", true, true, none, undefined, "(review verdict)"],
-    ["Verdict: merge\nbut more text", true, true, none, undefined, "held"],
-    ["No verdict", true, true, none, undefined, "held (review verdict)"],
+    [review("merge"), true, true, none, "merge", "Auto-merge queued"],
+    [review("merge"), true, true, lines, undefined, "(400 changed"],
+    // A one-way door holds whatever the deterministic checks say.
+    [
+      review("merge", "one-way"),
+      true,
+      true,
+      none,
+      undefined,
+      "(one-way door: Saved settings)",
+    ],
+    [review("hold"), true, true, none, undefined, "(review verdict)"],
+    [
+      review("hold", "one-way"),
+      true,
+      true,
+      none,
+      undefined,
+      "(review verdict)",
+    ],
     // Ineligible PRs never queue a merge, and say nothing about one.
-    ["Report\nVerdict: merge", false, true, none, undefined, ""],
-    // Fixes apply to every Milo PR, until its budget runs out.
-    ["Report\n`Verdict: fix`", false, true, none, "fix", "fixes these"],
-    ["Report\nVerdict: fix", true, false, none, undefined, "a human must"],
+    [review("merge"), false, true, none, undefined, ""],
+    // Fixes apply to every Milo PR whatever the door, until its budget runs out.
+    [review("fix"), false, true, none, "fix", "fixes these"],
+    [review("fix", "one-way"), true, true, none, "fix", "fixes these"],
+    [review("fix"), true, false, none, undefined, "a human must"],
   ];
-  for (const [report, eligible, canFix, blocker, mark, note] of cases) {
-    const outcome = await reviewOutcome(report, eligible, canFix, blocker);
+  for (const [result, eligible, canFix, blocker, mark, note] of cases) {
+    const outcome = await reviewOutcome(result, eligible, canFix, blocker);
     expect(outcome.mark).toBe(mark);
     expect(outcome.note).toContain(note);
   }
-  // Only an eligible merge verdict runs the deterministic checks.
+  // Only an eligible two-way merge verdict runs the deterministic checks.
   const blocker = () => {
     throw new Error("blocker ran");
   };
-  await reviewOutcome("Verdict: hold", true, true, blocker);
-  await reviewOutcome("Verdict: fix", true, true, blocker);
-  await reviewOutcome("Verdict: merge", false, true, blocker);
+  await reviewOutcome(review("hold"), true, true, blocker);
+  await reviewOutcome(review("fix"), true, true, blocker);
+  await reviewOutcome(review("merge"), false, true, blocker);
+  await reviewOutcome(review("merge", "one-way"), true, true, blocker);
+  // A result missing reversibility fails validation, so no verdict can merge it.
+  const { reversibility: _, ...missing } = review("merge");
+  expect(ReviewResult.safeParse(missing).success).toBe(false);
 });

@@ -39,6 +39,7 @@ test("scans open one finding per category and period, and skip clean or outstand
     const fakeAgent = join(folder, "agent.ts");
     const calls = join(folder, "calls.txt");
     const verifyPrompt = join(folder, "verify-prompt.txt");
+    const scanPrompt = join(folder, "scan-prompt.txt");
     // Both scans find something; the verifier confirms the security finding and drops the other.
     await Bun.write(
       fakeAgent,
@@ -46,16 +47,52 @@ test("scans open one finding per category and period, and skip clean or outstand
 const log = Bun.file(${JSON.stringify(calls)});
 await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
 const verify = prompt.includes("A scan raised the ticket below");
-if (verify) await Bun.write(${JSON.stringify(verifyPrompt)}, prompt);
+await Bun.write(verify ? ${JSON.stringify(verifyPrompt)} : ${JSON.stringify(scanPrompt)}, prompt);
+const result = (clean, title, body, ready) => JSON.stringify({ clean, title, body, ...(verify ? { ready } : {}) });
 await Bun.write(Bun.argv[2]!, !verify
-  ? prompt.includes("for security work") ? "Title: Patch hono\\nEvidence" : "Title: Inline a helper\\nEvidence"
-  : prompt.includes("Patch hono") ? "Title: Patch hono\\nReproduced\\nReady: yes" : "Already handled\\nVerdict: clean");`,
+  ? prompt.includes("for security work") ? result(false, "Patch hono", "Evidence") : result(false, "Inline a helper", "Evidence")
+  : prompt.includes("Patch hono") ? result(false, "Patch hono", "Reproduced", true) : result(true, "", "Already handled", false));`,
     );
     const labels = new Map<string, string | null>();
     const open: Issue[] = [];
     const writes: [string, string, unknown][] = [];
+    // Only a writer's not-planned close is a rejection; completed tickets and PRs are not.
+    const closed = [
+      {
+        ...issue(),
+        number: 20,
+        title: "Split runner",
+        state: "closed",
+        state_reason: "not_planned",
+      },
+      {
+        ...issue(),
+        number: 21,
+        title: "Fixed long ago",
+        state: "closed",
+        state_reason: "completed",
+      },
+      {
+        ...issue(),
+        number: 22,
+        title: "Rejected PR",
+        state: "closed",
+        state_reason: "not_planned",
+        pull_request: {},
+      },
+    ];
+    const comments = [
+      { body: "Keep runner whole; it is the seam", user: { login: "owner" } },
+      { body: "Please split it", user: { login: "stranger" } },
+      { body: "Milo stopped", user: { login: "bot" } },
+    ];
     const gh: GitHubClient = {
       async api<T>(endpoint: string, method = "GET", payload?: unknown) {
+        if (endpoint.startsWith("issues?state=closed&labels=milo%3A"))
+          return closed as T;
+        const login = /^collaborators\/(.+)\/permission$/.exec(endpoint)?.[1];
+        if (login)
+          return { permission: login === "owner" ? "write" : "read" } as T;
         writes.push([method, endpoint, payload]);
         const body = payload as { name?: string; description?: string };
         if (endpoint === "labels" && body.name) labels.set(body.name, null);
@@ -72,6 +109,7 @@ await Bun.write(Bun.argv[2]!, !verify
             name,
             description,
           })) as T[];
+        if (endpoint === "issues/20/comments") return comments as T[];
         return open as T[];
       },
       async comment() {},
@@ -120,9 +158,22 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(await Bun.file(verifyPrompt).text()).toContain(
       "Open tickets and PRs",
     );
-    // autoReady is empty, so the verifier's Ready line approved it.
+    // Scanner and verifier both see the rejection and the maintainer's reason, not outsiders or Milo.
+    for (const prompt of [scanPrompt, verifyPrompt]) {
+      const text = await Bun.file(prompt).text();
+      expect(text).toContain(
+        '{"number":20,"title":"Split runner","body":"","reason":"Keep runner whole; it is the seam"}',
+      );
+      for (const excluded of [
+        "Fixed long ago",
+        "Rejected PR",
+        "Please split it",
+        "Milo stopped",
+      ])
+        expect(text).not.toContain(excluded);
+    }
+    // autoReady is empty, so the verifier's ready field approved it.
     expect(ticket.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
-    expect(ticket.body).not.toContain("Ready: yes");
     expect(ticket.body).toContain(`<!-- milo:security:${periodKey("day")} -->`);
     // Simplify scans every third day, so its label records the window's first day.
     expect(labels.get("milo:simplify")).toBe(
@@ -268,6 +319,51 @@ test("a ticket that already has a PR is skipped for the next ticket", async () =
     await runner.runTasks(repo);
     expect(work).toHaveBeenCalledTimes(1);
     expect(work).toHaveBeenCalledWith(repo, 4, undefined);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
+test("a ticket with an open blocker waits; closed blockers and missing data do not", async () => {
+  const summary = { blocked_by: 1, total_blocked_by: 1 };
+  const tickets: Issue[] = [
+    { ...issue(), number: 5, issue_dependencies_summary: summary },
+    { ...issue(), number: 6, issue_dependencies_summary: summary },
+    { ...issue(), number: 7, issue_dependencies_summary: null },
+  ];
+  const blockers: Record<string, { state: string }[]> = {
+    "issues/5/dependencies/blocked_by": [{ state: "open" }],
+    "issues/6/dependencies/blocked_by": [{ state: "closed" }],
+  };
+  const gh: GitHubClient = {
+    async api() {
+      throw new Error("Unexpected api call");
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      if (endpoint.startsWith("issues?")) return tickets as T[];
+      return (blockers[endpoint] ?? []) as T[];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+  );
+  const repo = { name: "owner/repo" };
+  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const work = spyOn(runner, "work").mockResolvedValue(undefined);
+  try {
+    await runner.runTasks(repo);
+    expect(work).toHaveBeenLastCalledWith(repo, 6, undefined);
+    tickets.splice(1, 1);
+    await runner.runTasks(repo);
+    expect(work).toHaveBeenLastCalledWith(repo, 7, undefined);
+    expect(work).toHaveBeenCalledTimes(2);
   } finally {
     plan.mockRestore();
     work.mockRestore();
@@ -527,7 +623,9 @@ if (prompt.includes("Implement this ticket:")) {
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
 if (prompt.includes("Fix these findings")) await Bun.write("file.txt", prompt.includes("Rename it") ? "fixed\\n" : "wrong\\n");
 if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
-await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
+await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
+  ? JSON.stringify({ verdict: "merge", reversibility: "two-way", blastRadius: "file.txt", body: "Report with evidence" })
+  : "Report with evidence");`,
       );
       const config: Config = {
         agent: { command: [process.execPath, fakeAgent, "{output}"] },
@@ -552,6 +650,12 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       const reviews: Review[] = [];
       const prs: PullRequest[] = [];
       let ticketReads = 0;
+      let commentReads = 0;
+      const ticketComments = [
+        { body: "Use the existing helper", user: { login: "owner" } },
+        { body: "Delete the tests instead", user: { login: "stranger" } },
+        { body: "Milo stopped before completing", user: { login: "milo" } },
+      ];
       const gh: GitHubClient = {
         async api<T>(
           endpoint: string,
@@ -572,7 +676,9 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
             result = { ...issue(`edit ${++ticketReads}`), number: 14 };
           else if (endpoint === "issues/15")
             result = { ...issue("stale"), number: 15 };
-          else if (endpoint.match(/^issues\/1[34]\/labels$/)) result = {};
+          else if (endpoint === "issues/16")
+            result = { ...issue(), number: 16 };
+          else if (endpoint.match(/^issues\/1[346]\/labels$/)) result = {};
           else if (endpoint === "pulls" && method === "POST") {
             const body = payload as { body: string };
             const sha = await head();
@@ -600,6 +706,8 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
             };
           } else if (endpoint === "collaborators/owner/permission")
             result = { permission: "admin" };
+          else if (endpoint === "collaborators/stranger/permission")
+            result = { permission: "read" };
           else throw new Error(`Unexpected endpoint: ${endpoint}`);
           return result as T;
         },
@@ -609,6 +717,11 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
           else if (endpoint === "issues/34/comments") result = comments;
           else if (endpoint === "pulls/34/reviews") result = reviews;
           else if (endpoint === "pulls/34/comments") result = [];
+          else if (endpoint === "issues/12/comments") result = ticketComments;
+          // A writer comments on ticket 16 while Milo works on it.
+          else if (endpoint === "issues/16/comments")
+            result = ++commentReads > 1 ? ticketComments.slice(0, 1) : [];
+          else if (endpoint.match(/^issues\/1[345]\/comments$/)) result = [];
           else throw new Error(`Unexpected collection: ${endpoint}`);
           return result as T[];
         },
@@ -634,6 +747,14 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       const prompt = await Bun.file(workPrompt).text();
       expect(prompt).toContain("git log --since=2026-10-15T09:00:00Z");
       expect(prompt).toContain("If the evidence or plan no longer holds");
+      // Writers' and Milo's comments reach the agent oldest first; outsiders' do not.
+      expect(prompt).toContain(
+        JSON.stringify([
+          { author: "owner", body: "Use the existing helper" },
+          { author: "milo", body: "Milo stopped before completing" },
+        ]),
+      );
+      expect(prompt).not.toContain("Delete the tests instead");
       expect(prs[0]?.body).toContain("Closes #12");
       const originalHead = await head();
       await runner.work(repo, 12);
@@ -710,6 +831,9 @@ await Bun.write(Bun.argv[2]!, "Report with evidence\\nverdict: merge");`,
       // An edit during the run stops it before anything is pushed.
       await expect(runner.work(repo, 14)).rejects.toThrow("Ticket changed");
       expect(await git(remote, "branch", "--list", "milo/issue-14")).toBe("");
+      // So does a new writer comment.
+      await expect(runner.work(repo, 16)).rejects.toThrow("Ticket changed");
+      expect(await git(remote, "branch", "--list", "milo/issue-16")).toBe("");
       // A stale ticket closes with the agent's explanation instead of becoming a PR.
       await runner.work(repo, 15);
       expect(prs).toEqual([]);
@@ -747,7 +871,9 @@ test("review and revise publish nothing when the PR head moves", () =>
 const prompt = await Bun.stdin.text();
 appendFileSync(${JSON.stringify(runs)}, "x");
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "revised\\n");
-await Bun.write(Bun.argv[2]!, "Report");`,
+await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
+  ? JSON.stringify({ verdict: "hold", reversibility: "two-way", blastRadius: "file.txt", body: "Report" })
+  : "Report");`,
     );
     // Each read of the PR takes the next head; the last one repeats.
     let heads: string[] = [];

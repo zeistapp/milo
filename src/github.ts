@@ -16,6 +16,11 @@ export const Issue = z.object({
   created_at: z.string(),
   // Null for a deleted account.
   user: User.nullable(),
+  state_reason: z.string().nullish(),
+  // Absent where the repo or API version has no issue dependencies.
+  issue_dependencies_summary: z
+    .object({ total_blocked_by: z.number() })
+    .nullish(),
 });
 export type Issue = z.infer<typeof Issue>;
 const Ref = z.object({ ref: z.string(), sha: z.string() });
@@ -119,6 +124,35 @@ export async function trustedAuthor(
   return (
     issue.user.login === (await gh.viewer()) || isWriter(gh, issue.user.login)
   );
+}
+// Ticket comments are a trust boundary: only Milo's and writers' reach an agent, oldest first.
+export async function trustedComments(
+  gh: GitHubClient,
+  number: number,
+): Promise<{ author: string; body: string }[]> {
+  const writers = new Map([[await gh.viewer(), true]]);
+  const trusted = [];
+  for (const { user, body } of parse(
+    z.array(Comment),
+    await gh.pages(`issues/${number}/comments`),
+  )) {
+    if (!user) continue;
+    if (!writers.has(user.login))
+      writers.set(user.login, await isWriter(gh, user.login));
+    if (writers.get(user.login)) trusted.push({ author: user.login, body });
+  }
+  return trusted;
+}
+// GitHub does not document whether the summary's blocked_by counts only open blockers, so check each one.
+export async function blocked(
+  gh: GitHubClient,
+  issue: Issue,
+): Promise<boolean> {
+  if (!issue.issue_dependencies_summary?.total_blocked_by) return false;
+  return parse(
+    z.array(z.object({ state: z.string() })),
+    await gh.pages(`issues/${issue.number}/dependencies/blocked_by`),
+  ).some((blocker) => blocker.state === "open");
 }
 // An App installation token can't read GET /user, so the workflow passes the App's slug.
 const appLogin = () =>

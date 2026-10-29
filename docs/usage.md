@@ -2,7 +2,7 @@
 
 Milo maintains JavaScript and TypeScript repos through GitHub tickets and reviewed pull requests. It runs on Bun, locally or in GitHub Actions. No server or local daemon is required.
 
-Separate runners cover security, bugs, architecture, simplify and PR reviews. Dependency and performance scans were removed; see [ADR 0001](adr/0001-remove-dependency-and-performance-scans.md). Every agent call receives the shared guidelines in `src/guidelines.txt` (Milo's objective as a senior full-stack engineer reviewing the codebase daily, plus long-term architecture principles and coding and writing standards) ahead of the harness policy. Each run first works the oldest approved ticket, then scans read-only. A scan that finds nothing leaves no issue. A finding goes to a second agent, which installs the project, reproduces the problem, checks every reference and call site against the code and against open tickets and PRs, then rewrites the ticket or drops it. A verified finding becomes a self-contained issue with evidence, acceptance criteria, the assumptions the verifier made, and any open questions it could not safely settle. The verifier ends with `Ready: yes` only when it reproduced the problem, every reference checks out, there are no open questions and no open ticket or PR must land first; Milo then labels the issue `milo:ready` itself. Otherwise add `milo:ready` to approve it, or remove the label to hold a ticket. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The review runner installs the project and reviews each PR commit, running the tests and code the change touches. It ends with `Verdict: fix`, `merge` or `hold`. On `fix`, Milo revises the PR from the review's findings and reviews the new commit, at most twice per PR; after that, the findings wait for a human. A repository writer's **Changes requested** review always comes first. Humans merge, except for categories you list in `autoMerge`.
+Separate runners cover security, bugs, architecture, simplify and PR reviews. Dependency and performance scans were removed; see [ADR 0001](adr/0001-remove-dependency-and-performance-scans.md). Every agent call receives the shared guidelines in `src/guidelines.txt` (Milo's objective as a senior full-stack engineer reviewing the codebase daily, plus long-term architecture principles and coding and writing standards) ahead of the harness policy. Each run first works the oldest approved ticket, skipping any that an open issue still blocks through GitHub's issue dependencies, then scans read-only. A scan that finds nothing leaves no issue. A finding goes to a second agent, which installs the project, reproduces the problem, checks every reference and call site against the code and against open tickets and PRs, then rewrites the ticket or drops it. The scanner and verifier both see the latest tickets in the category that a maintainer closed as not planned, with the last maintainer comment as the reason, so a rejected finding is not raised again unless the code has since answered that reason. A verified finding becomes a self-contained issue with evidence, acceptance criteria, the assumptions the verifier made, and any open questions it could not safely settle. The verifier marks a ticket ready only when it reproduced the problem, every reference checks out, there are no open questions and no open ticket or PR must land first; Milo then labels the issue `milo:ready` itself. Otherwise add `milo:ready` to approve it, or remove the label to hold a ticket. Milo clones the repo, checks its baseline, runs the agent, installs from the resulting lockfile, reruns checks and opens a linked PR. The agent also gets the ticket's comments from Milo and repository writers, but not from anyone else; a new one during the run stops it, like an edit to the ticket. The review runner installs the project and reviews each PR commit, running the tests and code the change touches. It checks the diff against Milo's code rules and the repo's own standards (AGENTS.md, CLAUDE.md, CODING_STANDARDS.md, CONTRIBUTING.md), and flags a touched file whose lint warnings grew. Its verdict is `fix`, `merge` or `hold`, and it rates the change a two-way door (a revert undoes it) or a one-way door. Scans, verifiers and reviews return structured results, validated against a schema, so no line quoted in a report can set a verdict. On `fix`, Milo revises the PR from the review's findings and reviews the new commit, at most twice per PR; after that, the findings wait for a human. A repository writer's **Changes requested** review always comes first. Humans merge, except for categories you list in `autoMerge`.
 
 ## Your frameworks and build patterns
 
@@ -47,7 +47,7 @@ bun run milo --config examples/ecosystem.json --category security --period day t
 bun run milo --config examples/ecosystem.json reviews
 ```
 
-The agent reads its prompt from stdin. A custom `agent.command` is an argv array: `{output}` is the final report path and `{sandbox}` is `workspace-write` or `read-only`. Use it to run another agent or a sandboxed wrapper.
+The agent reads its prompt from stdin. A custom `agent.command` is an argv array: `{output}` is the final report path, `{schema}` is a JSON Schema file and `{sandbox}` is `workspace-write` or `read-only`. For scans, verifiers and reviews, the agent must write JSON matching `{schema}` to `{output}`. Use it to run another agent or a sandboxed wrapper.
 
 For unusual scripts, integration services or an aggregate monorepo pipeline, replace discovery with explicit commands in the repo entry:
 
@@ -93,7 +93,7 @@ jobs:
 
 ## Agents, models and credentials
 
-Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.scanModel`:
+Set `agent.provider` to `claude` and optionally choose `agent.model`, `agent.scanModel` and `agent.reviewModel`:
 
 ```json
 {
@@ -101,6 +101,7 @@ Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.
     "provider": "claude",
     "model": "MODEL_ID",
     "scanModel": "SCAN_MODEL_ID",
+    "reviewModel": "REVIEW_MODEL_ID",
     "effort": "medium",
     "maxBudgetUsd": 5,
     "timeoutSeconds": 1800
@@ -109,7 +110,7 @@ Set `agent.provider` to `claude` and optionally choose `agent.model` and `agent.
 }
 ```
 
-Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. `scanModel` applies only to read-only scans, which run once per category, so a cheaper model there cuts most of the cost; omit it to scan with `model`. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. `effort` sets `--effort` for edits, verification and reviews (`low`, `medium`, `high`, `xhigh` or `max`; default `medium`); scans keep the CLI's default. `maxBudgetUsd` sets `--max-budget-usd` on every Claude call (default 5). A call that hits it fails, and a ticket that fails is labelled `milo:blocked` rather than retried. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
+Replace `MODEL_ID` with a model supported by your CLI and account. Milo passes it through `--model`, overriding the CLI default. Use an exact version ID to pin a release; aliases can change. Omit `model` to use the CLI's default. `scanModel` applies only to read-only scans, which run once per category, so a cheaper model there cuts most of the cost; omit it to scan with `model`. `reviewModel` applies only to PR reviews. A model other than the one that wrote the change is less likely to share its blind spots, and its verdict gates `autoMerge`; omit it to review with `model`. Milo maintains no fixed list of models, so new IDs do not require a Milo update. Unsupported models fail the task. `effort` sets `--effort` for edits, verification and reviews (`low`, `medium`, `high`, `xhigh` or `max`; default `medium`); scans keep the CLI's default. `maxBudgetUsd` sets `--max-budget-usd` on every Claude call (default 5). A call that hits it fails, and a ticket that fails is labelled `milo:blocked` rather than retried. See the [Claude command reference](https://code.claude.com/docs/en/cli-reference).
 
 Add the `ANTHROPIC_API_KEY` secret to the `maintenance` environment. The action's `claude-version` input takes an exact version, 2.1.296+; the shared workflow defaults to Milo's tested version, and an optional `CLAUDE_VERSION` variable overrides it. Configs with a custom `agent.command` install nothing. CLI version and model version are separate choices. Milo's Claude adapter uses bare mode and requires API authentication rather than a subscription login.
 
@@ -138,7 +139,7 @@ An App token covers repos under the calling repo's owner, so a config that targe
 
 ## Host and distribute
 
-Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`) and scans with Claude Sonnet 5.5 (`claude-sonnet-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY`. Milo acts as the `milo-maintainer` GitHub App through `MILO_APP_CLIENT_ID` and `MILO_APP_PRIVATE_KEY`; see [Run Milo as a GitHub App](#run-milo-as-a-github-app). Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan its categories, then add `milo:ready` to any findings the verifier left for you. Scheduled runners scan again at their configured intervals. `autoReady` approves every ticket in a category, even ones the verifier held back.
+Milo's own `milo.config.json` targets `zeistapp/milo` with Claude Opus 5.5 (`claude-opus-5-5`) and scans and reviews PRs with Claude Sonnet 5.5 (`claude-sonnet-5-5`). Its `maintenance` environment allows only `main`, sets `CLAUDE_VERSION` to `2.1.296` (the same as the default), and needs `ANTHROPIC_API_KEY`. Milo acts as the `milo-maintainer` GitHub App through `MILO_APP_CLIENT_ID` and `MILO_APP_PRIVATE_KEY`; see [Run Milo as a GitHub App](#run-milo-as-a-github-app). Add the secrets under Settings → Environments → maintenance. Run the Manual maintenance workflow with `action: plan` to scan its categories, then add `milo:ready` to any findings the verifier left for you. Scheduled runners scan again at their configured intervals. `autoReady` approves every ticket in a category, even ones the verifier held back.
 
 Push Milo to GitHub. Restrict a `maintenance` environment to the default branch and set `MILO_GITHUB_TOKEN` and `ANTHROPIC_API_KEY` as secrets; `CLAUDE_VERSION` is optional. Use a fine-grained user token with Contents, Issues and Pull requests write permissions, and Metadata read access, restricted to the ecosystem and Milo repos. Or [run Milo as a GitHub App](#run-milo-as-a-github-app). The [default workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token) only covers its own repo.
 
@@ -160,7 +161,7 @@ Require target-repo CI and human approval through branch rules, dismissing stale
 ## Automatic merging
 
 List categories in a repo's `autoMerge` to let Milo merge their PRs without a human, for example `"autoReady": ["simplify"], "autoMerge": ["simplify"]`. Milo merges a PR only when all of these hold:
-- The reviewer agent ends its review with `Verdict: merge` (minor, non-breaking, in scope and tested).
+- The reviewer agent's verdict is `merge` (minor, non-breaking, in scope and tested), and it rates the change a two-way door. A one-way door, such as a public API, stored data format, migration or user-visible behaviour change, waits for a human.
 - The change is at most 300 lines outside lockfiles, has no binary files, and adds or removes no dependencies or package manifests.
 - Every changed dependency is a plain semver version and stays within its current major (or minor below 1.0).
 - A later review run finds at least one CI check on that exact commit, and all of them passed.
