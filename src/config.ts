@@ -35,13 +35,17 @@ export const categories = {
     "Never publish credentials or sensitive exploit details.",
   bugs:
     "Find behaviour that is wrong today: unhandled edge cases and errors, races, state that can get stuck, and code that contradicts its tests, types or docs. " +
+    "Places worth checking, though none is a finding by itself: a switch over a union whose default silently absorbs members added later; a promise nobody awaits, handles or marks void with a reason, or an async callback passed where nothing awaits it; throwing a value that is not an Error; an any outside a third-party boundary; an optional parameter callers omit by mistake; a function too complex to follow. " +
+    "Where the repo's linter has a rule for the pattern (in Biome: noExplicitAny, useThrowOnlyError, noExcessiveCognitiveComplexity), propose enabling it as the fix. " +
     "Show the failing input or trace the fault, and add a test that fails before the fix.",
   architecture:
     "Find friction where future changes will land: start from hot spots in recent git history, then trace those flows. Look for shallow modules, one concept spread across many files, coupling that leaks across seams, and names that hide what a module does or contradict the glossary, and UI components that hold flow, async or error logic a pure reducer should own; apply the deletion test. " +
-    "Propose one deepening that improves locality and testability: the modules involved, the smaller interface and how tests move to it. Preserve the established framework, build patterns and ADRs.",
+    "Propose one deepening that improves locality and testability: the modules involved, the smaller interface and how tests move to it. Preserve the established framework, build patterns and ADRs. " +
+    "When the proposal is a rule code can check, propose the check (a lint rule, an import-boundary config, or a small guard script whose allowlist of existing violations may only shrink) rather than a written convention.",
   simplify:
     "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +
-    "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code.",
+    "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code. " +
+    "Delete tests that fail the test bar, except a regression test from a past fix or the last guard on a real rule; fold that guard's assertion into a surviving test instead.",
 } satisfies Record<Category, string>;
 // Daily scans of these categories wait this many days between runs.
 export const scanEveryDays: Partial<Record<Category, number>> = { simplify: 3 };

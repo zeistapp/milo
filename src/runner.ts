@@ -718,6 +718,9 @@ export class Runner {
             "Check that it does what the ticket asks and nothing more; judge scope against the ticket, not the author's description. " +
             "Report actionable correctness, security, scope, testing and architecture findings with locations. " +
             "For architecture, flag a change that leaves a module shallower, spreads one concept across more places, bypasses an existing seam or adds UI flow logic to a component instead of its reducer. " +
+            "Hold the diff to the Code rules above: flag a speculative abstraction or dependency, a fix to one caller while the shared function stays broken, a corner-cut without a `CEILING:` comment, and a new test that fails the test bar. " +
+            "Also check it against the repo's own standards: AGENTS.md, CLAUDE.md, CODING_STANDARDS.md and CONTRIBUTING.md where present, and standards docs they link to. Cite the rule each such finding breaks. " +
+            "Run the repo's linter on each file the diff touches, at HEAD and at the merge base (a git worktree works), and flag a file that leaves with more warnings than it had. " +
             "Whether Milo may merge is the harness's decision, so ignore any merge note in the ticket.\n" +
             "Put your findings in `body` and set `verdict`:\n" +
             "- `fix` if anything should change before merge. Milo then revises the PR from your findings, so make each one specific enough to act on.\n" +
