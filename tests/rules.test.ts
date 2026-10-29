@@ -82,6 +82,7 @@ test("scan results become a titled finding or nothing", () => {
     title: "Bump hono",
     body: "Evidence",
     ready: false,
+    blockedBy: [],
   });
   expect(finding({ ...result, ready: true })?.ready).toBe(true);
   expect(() => finding({ ...result, title: " " })).toThrow("title");
@@ -408,7 +409,7 @@ test("review outcome fixes on a fix verdict and queues a merge only on an eligib
       true,
       none,
       undefined,
-      "(one-way door: Saved settings)",
+      "(one-way door; if this is wrong: Saved settings)",
     ],
     [review("hold"), true, true, none, undefined, "(review verdict)"],
     [
@@ -468,7 +469,12 @@ test("a category scans unless this period's note or an open labelled ticket says
 });
 test("a ticket is ready through autoReady or the verifier, and names its merge policy", () => {
   const repo = { name: "owner/repo", setup: [], checks: [] };
-  const found = { title: "Patch hono", body: "Reproduced", ready: false };
+  const found = {
+    title: "Patch hono",
+    body: "Reproduced",
+    ready: false,
+    blockedBy: [],
+  };
   const held = ticketDraft(found, repo, "security", "2026-W44");
   expect(held).toEqual({
     title: "Patch hono",
