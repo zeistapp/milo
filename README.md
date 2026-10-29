@@ -53,6 +53,8 @@ jobs:
 
 4. Commit both files to your default branch and run the workflow. When a scan finds something, Milo opens an issue with the evidence. If its verifier reproduced the problem and found nothing for you to decide, the issue is already labelled `milo:ready`; otherwise approve it by adding the label. The next run picks it up. Milo opens a PR after your checks pass. Review and merge it yourself, or let Milo merge minor PRs with [`autoMerge`](docs/usage.md#automatic-merging).
 
+Steer Milo through the issue itself. Close a finding as **not planned** and say why in a comment; later scans won't raise it again unless the code changes in a way that answers your reason. Comment on an approved ticket to correct its plan before Milo starts. Mark a ticket as blocked by another issue and Milo waits until that issue closes.
+
 Limit scans with `categories` in your config. Use [Dependabot](https://docs.github.com/en/code-security/dependabot) for dependency upgrades; Milo dropped its dependency and performance scans ([why](docs/adr/0001-remove-dependency-and-performance-scans.md)), and configs that still list them load without them. The retired names `cleanup` and `modernisation` still work as `simplify`, and `organisation` as `architecture`.
 
 ## Move an existing setup to automatic updates
@@ -77,7 +79,7 @@ Milo runs Claude Code. Choose the model in your config:
 }
 ```
 
-Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. Milo runs edits and reviews at `medium` effort and stops any single Claude call at $5; change these with `agent.effort` and `agent.maxBudgetUsd`. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release.
+Replace `MODEL_ID` with a supported model ID. Omit `model` to use the CLI default. Milo runs edits and reviews at `medium` effort and stops any single Claude call at $5; change these with `agent.effort` and `agent.maxBudgetUsd`. An alias such as `sonnet` follows Anthropic's updates; use an exact version ID to pin a release. Set `agent.scanModel` for cheaper scans and `agent.reviewModel` to review PRs with a different model from the one that wrote them ([details](docs/usage.md)).
 
 Milo installs the Claude Code version it has tested and updates it through `@main`; set a `CLAUDE_VERSION` variable (2.1.296 or newer) only to pin your own.
 
