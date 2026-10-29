@@ -4,8 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
-- [ ] The review result carries a reversibility field and a blast-radius line
-- [ ] A one-way door, or a missing field, holds auto-merge with that reason in the review note
-- [ ] The deterministic merge blocker still applies on top
-- [ ] Tests cover two-way, one-way and missing reversibility with each verdict
+**Status:** done in 4cb3020
+
+The schema requires `reversibility`, so a result missing it fails validation: no review is posted and nothing merges.
+- [x] The review result carries a reversibility field and a blast-radius line
+- [x] A one-way door, or a missing field, holds auto-merge with that reason in the review note
+- [x] The deterministic merge blocker still applies on top
+- [x] Tests cover two-way, one-way and missing reversibility with each verdict

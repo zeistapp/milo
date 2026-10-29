@@ -6,9 +6,9 @@ Where a remaining rule is non-obvious, give it one clause naming the failure it 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] No section addresses a human reader as "me", or covers marketing copy, emails, copywriting briefs or new-project build process
-- [ ] Every rule left applies to at least one of scan, verify, implement, review or revise
-- [ ] Rules that the harness policy already states are not repeated in the guidelines
-- [ ] The guidelines are at most half their current word count
-- [ ] Lint, typecheck and tests pass
+**Status:** done in f62e927 (1,094 of 2,278 words)
+- [x] No section addresses a human reader as "me", or covers marketing copy, emails, copywriting briefs or new-project build process
+- [x] Every rule left applies to at least one of scan, verify, implement, review or revise
+- [x] Rules that the harness policy already states are not repeated in the guidelines
+- [x] The guidelines are at most half their current word count
+- [x] Lint, typecheck and tests pass
