@@ -4,8 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] `agent.reviewModel` is accepted by the config schema and used only for PR reviews
-- [ ] Without it, reviews use `agent.model` as today
-- [ ] The usage docs describe it
-- [ ] A test covers the model chosen for a review with and without the setting
+**Status:** done in 2f90d10
+
+Milo's own `milo.config.json` leaves `reviewModel` unset.
+- [x] `agent.reviewModel` is accepted by the config schema and used only for PR reviews
+- [x] Without it, reviews use `agent.model` as today
+- [x] The usage docs describe it
+- [x] A test covers the model chosen for a review with and without the setting
