@@ -4,7 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
-- [ ] The review flags a touched file whose lint warnings grew against the merge base
-- [ ] The architecture area prefers an enforcing check, with a shrink-only allowlist for existing violations, over a written rule
-- [ ] Neither change adds a dependency to Milo itself
+**Status:** done in a0ee778
+
+The reviewer lints each touched file at HEAD and at the merge base (a git worktree) and compares warning counts.
+- [x] The review flags a touched file whose lint warnings grew against the merge base
+- [x] The architecture area prefers an enforcing check, with a shrink-only allowlist for existing violations, over a written rule
+- [x] Neither change adds a dependency to Milo itself

@@ -6,8 +6,8 @@ Do the same for Milo's own rules. The review prompt (`src/runner.ts`, the archit
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-- [ ] The review prompt names `CODING_STANDARDS.md` and `CONTRIBUTING.md`, and other standards docs they link to, as rules to check the diff against
-- [ ] Findings cite the rule they break
-- [ ] The review prompt flags speculative abstractions or dependencies, a fix applied to one caller instead of the shared function, and a corner-cut without a `CEILING:` comment
-- [ ] Repos without these files review exactly as before
+**Status:** done in a0ee778
+- [x] The review prompt names `CODING_STANDARDS.md` and `CONTRIBUTING.md`, and other standards docs they link to, as rules to check the diff against
+- [x] Findings cite the rule they break
+- [x] The review prompt flags speculative abstractions or dependencies, a fix applied to one caller instead of the shared function, and a corner-cut without a `CEILING:` comment
+- [x] Repos without these files review exactly as before
