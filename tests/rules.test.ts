@@ -28,7 +28,10 @@ import {
   reviewOutcome,
   reviewStamp,
   ScanResult,
+  scannedNote,
+  shouldScan,
   taskBranch,
+  ticketDraft,
   ticketNumber,
   VerifiedResult,
   validateIssue,
@@ -439,4 +442,58 @@ test("review outcome fixes on a fix verdict and queues a merge only on an eligib
   // A result missing reversibility fails validation, so no verdict can merge it.
   const { reversibility: _, ...missing } = review("merge");
   expect(ReviewResult.safeParse(missing).success).toBe(false);
+});
+
+test("a category scans unless this period's note or an open labelled ticket says otherwise", () => {
+  const labelled = { ...issue(), labels: [{ name: "milo:security" }] };
+  expect(shouldScan(null, "2026-W44", [], "security")).toBe(true);
+  expect(shouldScan(scannedNote("2026-W43"), "2026-W44", [], "security")).toBe(
+    true,
+  );
+  expect(shouldScan(scannedNote("2026-W44"), "2026-W44", [], "security")).toBe(
+    false,
+  );
+  expect(shouldScan(null, "2026-W44", [labelled], "security")).toBe(false);
+  // Another category's ticket does not hold this one.
+  expect(shouldScan(null, "2026-W44", [labelled], "simplify")).toBe(true);
+  // Anyone can file an issue with a body marker, so it does not skip a scan.
+  expect(
+    shouldScan(
+      null,
+      "2026-W44",
+      [issue("<!-- milo:security:2026-W44 -->")],
+      "security",
+    ),
+  ).toBe(true);
+});
+test("a ticket is ready through autoReady or the verifier, and names its merge policy", () => {
+  const repo = { name: "owner/repo", setup: [], checks: [] };
+  const found = { title: "Patch hono", body: "Reproduced", ready: false };
+  const held = ticketDraft(found, repo, "security", "2026-W44");
+  expect(held).toEqual({
+    title: "Patch hono",
+    labels: ["milo:task", "milo:security"],
+    body: "<!-- milo:security:2026-W44 -->\n\nReproduced\n\nAdd `milo:ready` to authorise execution. Milo never merges this category.",
+  });
+  for (const draft of [
+    ticketDraft({ ...found, ready: true }, repo, "security", "2026-W44"),
+    ticketDraft(
+      found,
+      { ...repo, autoReady: ["security"] },
+      "security",
+      "2026-W44",
+    ),
+  ]) {
+    expect(draft.labels).toEqual(["milo:task", "milo:security", "milo:ready"]);
+    expect(draft.body).toContain("remove `milo:ready` to hold it.");
+  }
+  // autoReady and autoMerge are per category.
+  expect(
+    ticketDraft(found, { ...repo, autoReady: ["simplify"] }, "security", "k")
+      .labels,
+  ).not.toContain("milo:ready");
+  expect(
+    ticketDraft(found, { ...repo, autoMerge: ["security"] }, "security", "k")
+      .body,
+  ).toEndWith(" Milo may merge a minor, reviewed PR after CI passes.");
 });

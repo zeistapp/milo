@@ -34,7 +34,7 @@ function issue(body = "", state = "open"): Issue {
     user: { login: "milo" },
   };
 }
-test("scans open one finding per category and period, and skip clean or outstanding ones", () =>
+test("plan files the verified finding, records clean scans and skips repeat runs", () =>
   temporary("milo-scan-", async (folder) => {
     const fakeAgent = join(folder, "agent.ts");
     const calls = join(folder, "calls.txt");
@@ -179,18 +179,8 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(labels.get("milo:simplify")).toBe(
       `Milo scanned ${periodKey("day", new Date(), 3)}`,
     );
-    // Repeat runs in the same period, and categories with an open ticket, call no agent.
-    let count = (await Bun.file(calls).text()).length;
-    await runner.plan(repo, true, "day");
-    expect((await Bun.file(calls).text()).length).toBe(count);
-    // Anyone can file an issue with a body marker, so it does not skip a scan.
-    labels.set("milo:security", null);
-    open.push(issue("<!-- milo:security:x -->"));
-    await runner.plan(repo, true, "day");
-    expect((await Bun.file(calls).text()).length).toBeGreaterThan(count);
-    count = (await Bun.file(calls).text()).length;
-    labels.set("milo:security", null);
-    open.push({ ...issue(), labels: [{ name: "milo:security" }] });
+    // The label notes written above stop repeat runs in the same period from calling an agent.
+    const count = (await Bun.file(calls).text()).length;
     await runner.plan(repo, true, "day");
     expect((await Bun.file(calls).text()).length).toBe(count);
   }));

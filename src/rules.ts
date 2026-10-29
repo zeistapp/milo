@@ -101,14 +101,47 @@ export const ReviewResult = z.object({
   body: z.string(),
 });
 export type ReviewResult = z.infer<typeof ReviewResult>;
+export type Finding = { title: string; body: string; ready: boolean };
 export function finding(
   result: z.infer<typeof ScanResult> & { ready?: boolean },
-): { title: string; body: string; ready: boolean } | undefined {
+): Finding | undefined {
   if (result.clean) return;
   const title = result.title.replace(/\s+/g, " ").trim().slice(0, 200);
   if (!title)
     throw new Error("Scan result has neither a title nor a clean verdict");
   return { title, body: result.body.trim(), ready: result.ready ?? false };
+}
+// One outstanding ticket per category: triage or finish it before Milo looks again.
+// `note` is the category label's description; `open` excludes PRs.
+export const shouldScan = (
+  note: string | null | undefined,
+  key: string,
+  open: Issue[],
+  category: Category,
+) =>
+  note !== scannedNote(key) &&
+  !open.some((issue) => issueCategory(issue) === category);
+// The issue a verified finding files. The verifier's `ready` approves it like autoReady does;
+// PRs still merge only under autoMerge.
+export function ticketDraft(
+  found: Finding,
+  repo: Repo,
+  category: Category,
+  key: string,
+): { title: string; labels: string[]; body: string } {
+  const ready = repo.autoReady?.includes(category) || found.ready;
+  return {
+    title: found.title,
+    labels: ["milo:task", `milo:${category}`, ...(ready ? ["milo:ready"] : [])],
+    body:
+      `${ticketStamp(category, key)}\n\n${found.body}\n\n` +
+      (ready
+        ? "Milo starts this on its next run; remove `milo:ready` to hold it."
+        : "Add `milo:ready` to authorise execution.") +
+      (repo.autoMerge?.includes(category)
+        ? " Milo may merge a minor, reviewed PR after CI passes."
+        : " Milo never merges this category."),
+  };
 }
 // Labels only: issue authors can edit the body, but labelling needs triage access.
 export function issueCategory(issue: Issue): Category | undefined {
