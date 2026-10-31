@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { chmod, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
+import { runAgent } from "../src/agent.ts";
 import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { sandboxEnv, temporary, workHome } from "../src/process.ts";
 import { ScanResult } from "../src/rules.ts";
-import { runAgent } from "../src/runner.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
   const repos = [{ name: "owner/repo" }];
