@@ -1,15 +1,7 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
 import { parseConfig } from "../src/config.ts";
-import type {
-  GitHubClient,
-  Issue,
-  PullRequest,
-  Review,
-} from "../src/github.ts";
-import { command, temporary } from "../src/process.ts";
+import type { Issue, PullRequest, Review } from "../src/github.ts";
 import {
-  ciState,
   failed,
   failedStamp,
   finding,
@@ -18,14 +10,10 @@ import {
   fixRequested,
   issueCategory,
   latestRequests,
-  mergeAction,
   mergeApproved,
-  mergeBlocker,
-  mergeFacts,
   nextReviewStep,
   ReviewResult,
   reviewed,
-  reviewOutcome,
   reviewStamp,
   ScanResult,
   scannedNote,
@@ -158,55 +146,6 @@ test("review revisions use the current effective review on the current commit", 
     ),
   ).toEqual([request]);
 });
-test("auto-merge blocks majors, dependency changes and large diffs", () =>
-  temporary("milo-merge-", async (root) => {
-    const git = (...args: string[]) => command(["git", ...args], { cwd: root });
-    const manifest = (dependencies: Record<string, string>) =>
-      Bun.write(join(root, "package.json"), JSON.stringify({ dependencies }));
-    const commit = async () => {
-      await git("add", ".");
-      await git("commit", "-qm", "change");
-      return git("rev-parse", "HEAD");
-    };
-    await git("init", "-q");
-    await git("config", "user.name", "Test");
-    await git("config", "user.email", "test@example.test");
-    await manifest({ hono: "^4.1.0", tiny: "0.3.1", exact: "1.0.0" });
-    const base = await commit();
-    await manifest({ hono: "^4.9.2", tiny: "0.3.9", exact: "1.0.1" });
-    await Bun.write(join(root, "bun.lock"), "x\n".repeat(1000));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBeUndefined();
-    const cases: [Record<string, string>, string][] = [
-      [{ hono: "^5.0.0", tiny: "0.3.1", exact: "1.0.0" }, "major"],
-      [{ hono: "^4.1.0", tiny: "0.4.0", exact: "1.0.0" }, "major"],
-      [{ hono: "latest", tiny: "0.3.1", exact: "1.0.0" }, "non-semver"],
-      [{ hono: "^4.1.0", tiny: "0.3.1" }, "removed"],
-    ];
-    for (const [dependencies, reason] of cases) {
-      await git("checkout", "-q", "--detach", base);
-      await manifest(dependencies);
-      await commit();
-      expect(await mergeBlocker(git, base)).toContain(reason);
-    }
-    for (const text of ["{", '{"dependencies":[]}']) {
-      await git("checkout", "-q", "--detach", base);
-      await Bun.write(join(root, "package.json"), text);
-      const broken = await commit();
-      expect(await mergeBlocker(git, base)).toBe("package.json unreadable");
-      await manifest({ hono: "^4.1.0", tiny: "0.3.1", exact: "1.0.1" });
-      await commit();
-      expect(await mergeBlocker(git, broken)).toBe("package.json unreadable");
-    }
-    await git("checkout", "-q", "--detach", base);
-    await Bun.write(join(root, "big.ts"), "x\n".repeat(300));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBeUndefined();
-    await git("checkout", "-q", "--detach", base);
-    await Bun.write(join(root, "big.ts"), "x\n".repeat(301));
-    await commit();
-    expect(await mergeBlocker(git, base)).toBe("301 changed lines");
-  }));
 test("markers match only at the start of a comment and only for their commit", () => {
   const request: Review = {
     id: 1,
@@ -239,38 +178,6 @@ test("markers match only at the start of a comment and only for their commit", (
   expect(fixesLeft([`${fixedStamp}\n\nReview findings addressed.`])).toBeTrue();
   expect(fixesLeft([fixedStamp, `quoted ${fixedStamp}`])).toBeTrue();
   expect(fixesLeft([fixedStamp, fixedStamp])).toBeFalse();
-});
-
-test("CI state treats missing CI, pending or failing checks and passes distinctly", () => {
-  const run = (status: string, conclusion: string | null = null) => ({
-    status,
-    conclusion,
-  });
-  const none = { state: "pending", total_count: 0 };
-  const cases: [
-    ReturnType<typeof run>[],
-    typeof none,
-    ReturnType<typeof ciState>,
-  ][] = [
-    [[], none, "none"],
-    [[run("in_progress")], none, "waiting"],
-    [[run("completed", "failure")], none, "waiting"],
-    [
-      [run("completed", "neutral"), run("completed", "skipped")],
-      none,
-      "passed",
-    ],
-    [[run("completed", "success")], none, "passed"],
-    [
-      [run("completed", "success")],
-      { state: "failure", total_count: 1 },
-      "waiting",
-    ],
-    [[], { state: "failure", total_count: 1 }, "waiting"],
-    [[], { state: "success", total_count: 1 }, "passed"],
-  ];
-  for (const [runs, status, state] of cases)
-    expect(ciState(runs, status)).toBe(state);
 });
 
 test("next review step follows the bot-comment stamps", () => {
@@ -310,138 +217,15 @@ test("next review step follows the bot-comment stamps", () => {
     expect(nextReviewStep("abc", requests, comments)).toBe(step);
 });
 
-test("merge action skips change requests and waits for passing CI on an up-to-date branch", () => {
-  const cases: [
-    Parameters<typeof mergeAction>[0],
-    ReturnType<typeof mergeAction>["kind"],
-  ][] = [
-    [{ outstandingRequests: 1, ci: "passed", behindBy: 0 }, "skip"],
-    [{ outstandingRequests: 1, ci: "none", behindBy: 2 }, "skip"],
-    [{ outstandingRequests: 0, ci: "none", behindBy: 0 }, "no-ci"],
-    [{ outstandingRequests: 0, ci: "none", behindBy: 2 }, "no-ci"],
-    [{ outstandingRequests: 0, ci: "waiting", behindBy: 2 }, "waiting"],
-    [{ outstandingRequests: 0, ci: "passed", behindBy: 2 }, "update-branch"],
-    [{ outstandingRequests: 0, ci: "passed", behindBy: 0 }, "merge"],
-  ];
-  for (const [facts, kind] of cases) expect(mergeAction(facts).kind).toBe(kind);
-});
-
-test("merge facts count every change request and read every page of check runs", async () => {
-  const pr: PullRequest = {
-    number: 34,
-    state: "open",
-    body: "",
-    html_url: "https://example.test/pr/34",
-    head: { ref: "milo/issue-12", sha: "abc", repo: null },
-    base: { ref: "main", sha: "base" },
-  };
-  const passed = { status: "completed", conclusion: "success" };
-  let runs = Array(101).fill(passed);
-  // Requests on older commits or from deleted accounts still hold the merge.
-  let reviews: unknown[] = [
-    {
-      id: 1,
-      state: "CHANGES_REQUESTED",
-      commit_id: "old",
-      user: null,
-      body: "",
-    },
-  ];
-  const gh: GitHubClient = {
-    async api<T>(endpoint: string): Promise<T> {
-      const responses: Record<string, unknown> = {
-        "commits/abc/status": { state: "pending", total_count: 0 },
-        "compare/main...abc": { behind_by: 3 },
-      };
-      return responses[endpoint] as T;
-    },
-    async pages<T>(endpoint: string, key?: string): Promise<T[]> {
-      if (endpoint === "commits/abc/check-runs" && key === "check_runs")
-        return runs as T[];
-      return (endpoint === "pulls/34/reviews" ? reviews : []) as T[];
-    },
-    async comment() {},
-    async viewer() {
-      return "milo";
-    },
-  };
-  expect(await mergeFacts(gh, pr)).toEqual({
-    outstandingRequests: 1,
-    ci: "passed",
-    behindBy: 3,
-  });
-  // A failing run past the first page of 100 still blocks the merge.
-  runs = [...runs, { ...passed, conclusion: "failure" }];
-  reviews = [];
-  expect(await mergeFacts(gh, pr)).toEqual({
-    outstandingRequests: 0,
-    ci: "waiting",
-    behindBy: 3,
-  });
-});
-
-test("review outcome fixes on a fix verdict and queues a merge only on an eligible two-way merge verdict with no blocker", async () => {
-  const none = async () => undefined;
-  const lines = async () => "400 changed lines";
-  const review = (
-    verdict: ReviewResult["verdict"],
-    reversibility: ReviewResult["reversibility"] = "two-way",
-  ): ReviewResult => ({
-    verdict,
-    reversibility,
-    blastRadius: "Saved settings\nmore",
+test("a review result missing reversibility fails validation, so no verdict can merge it", () => {
+  const result = {
+    verdict: "merge",
+    reversibility: "two-way",
+    blastRadius: "Saved settings",
     body: "Report",
-  });
-  const cases: [
-    ReviewResult,
-    boolean,
-    boolean,
-    () => Promise<string | undefined>,
-    "merge" | "fix" | undefined,
-    string,
-  ][] = [
-    [review("merge"), true, true, none, "merge", "Auto-merge queued"],
-    [review("merge"), true, true, lines, undefined, "(400 changed"],
-    // A one-way door holds whatever the deterministic checks say.
-    [
-      review("merge", "one-way"),
-      true,
-      true,
-      none,
-      undefined,
-      "(one-way door; if this is wrong: Saved settings)",
-    ],
-    [review("hold"), true, true, none, undefined, "(review verdict)"],
-    [
-      review("hold", "one-way"),
-      true,
-      true,
-      none,
-      undefined,
-      "(review verdict)",
-    ],
-    // Ineligible PRs never queue a merge, and say nothing about one.
-    [review("merge"), false, true, none, undefined, ""],
-    // Fixes apply to every Milo PR whatever the door, until its budget runs out.
-    [review("fix"), false, true, none, "fix", "fixes these"],
-    [review("fix", "one-way"), true, true, none, "fix", "fixes these"],
-    [review("fix"), true, false, none, undefined, "a human must"],
-  ];
-  for (const [result, eligible, canFix, blocker, mark, note] of cases) {
-    const outcome = await reviewOutcome(result, eligible, canFix, blocker);
-    expect(outcome.mark).toBe(mark);
-    expect(outcome.note).toContain(note);
-  }
-  // Only an eligible two-way merge verdict runs the deterministic checks.
-  const blocker = () => {
-    throw new Error("blocker ran");
   };
-  await reviewOutcome(review("hold"), true, true, blocker);
-  await reviewOutcome(review("fix"), true, true, blocker);
-  await reviewOutcome(review("merge"), false, true, blocker);
-  await reviewOutcome(review("merge", "one-way"), true, true, blocker);
-  // A result missing reversibility fails validation, so no verdict can merge it.
-  const { reversibility: _, ...missing } = review("merge");
+  expect(ReviewResult.safeParse(result).success).toBe(true);
+  const { reversibility: _, ...missing } = result;
   expect(ReviewResult.safeParse(missing).success).toBe(false);
 });
 

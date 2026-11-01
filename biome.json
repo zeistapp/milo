@@ -5,5 +5,29 @@
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2 },
   "linter": { "enabled": true, "rules": { "preset": "recommended" } },
   "javascript": { "formatter": { "quoteStyle": "double" } },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["src/rules.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "./workspace.ts": "rules.ts holds pure rules; put git-driven policy in its own module, such as src/merge.ts.",
+                  "./project.ts": "rules.ts holds pure rules; put project-reading policy in its own module, such as src/merge.ts.",
+                  "./github.ts": {
+                    "message": "rules.ts holds pure rules: import only the Issue, PullRequest and Review data types, not the GitHub client.",
+                    "allowImportNames": ["Issue", "PullRequest", "Review"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
