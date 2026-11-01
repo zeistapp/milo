@@ -12,6 +12,7 @@ import {
   Review,
   trustedAuthor,
 } from "./github.ts";
+import { mergeDecision, reviewMark } from "./merge.ts";
 import { temporary } from "./process.ts";
 import { projectContext } from "./project.ts";
 import {
@@ -20,12 +21,8 @@ import {
   fixRequested,
   issueCategory,
   latestRequests,
-  mergeAction,
-  mergeBlocker,
-  mergeFacts,
   ReviewResult,
   reviewed,
-  reviewOutcome,
   reviewStamp,
   ticketNumber,
   validatePR,
@@ -83,7 +80,7 @@ export async function merge(
   pr: PullRequest,
 ): Promise<void> {
   if (!(await autoMergeCategory(gh, repo, pr))) return;
-  const action = mergeAction(await mergeFacts(gh, pr));
+  const action = await mergeDecision(gh, pr);
   switch (action.kind) {
     case "skip":
       return;
@@ -216,12 +213,12 @@ export async function review(
         ReviewResult,
       );
       await assertHeadCurrent("review");
-      const { mark, note } = await reviewOutcome(
-        result,
-        Boolean(await autoMergeCategory(gh, repo, pr)),
-        fixesLeft(ours),
-        () => mergeBlocker(git, pr.base.sha),
-      );
+      const { mark, note } = await reviewMark(result, {
+        eligible: Boolean(await autoMergeCategory(gh, repo, pr)),
+        canFix: fixesLeft(ours),
+        git,
+        base: pr.base.sha,
+      });
       await gh.comment(
         number,
         `${reviewStamp(pr.head.sha, mark)}\n\nAutomated review:\n\n${result.body.trim()}\n\nVerdict: ${result.verdict}. ${result.reversibility === "one-way" ? "One" : "Two"}-way door. If this is wrong: ${result.blastRadius.trim()}${note}`,

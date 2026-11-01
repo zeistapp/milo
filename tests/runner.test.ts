@@ -958,7 +958,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
     );
   }));
 
-// Policy lives in mergeAction and mergeFacts (tests/rules.test.ts); this checks Runner's wiring.
+// Policy lives in mergeDecision (tests/merge.test.ts); this checks Runner's wiring.
 test("auto-merge gates on the ticket, then merges, updates or logs without stopping later PRs", async () => {
   const repo: Repo = {
     name: "owner/repo",
