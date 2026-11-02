@@ -52,7 +52,7 @@ test("a dedicated task runner cannot consume another category or run reviews", a
     },
   };
   const runner = new Runner(config, () => gh);
-  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   const reviews = spyOn(runner, "runReviews").mockResolvedValue(undefined);
   await runner.runTasks(repo, "simplify", "week");
@@ -87,7 +87,7 @@ test("an unscoped task runner works the oldest approved ticket of any category, 
     },
   };
   const runner = new Runner(config, () => gh);
-  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   await runner.runTasks(repo, undefined, "day");
   expect(work).toHaveBeenCalledTimes(1);

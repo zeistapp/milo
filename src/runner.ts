@@ -220,11 +220,15 @@ export class Runner {
     private github = (repo: Repo): GitHubClient => new GitHub(repo.name),
     private cloneRepo: Clone = clone,
   ) {}
+  // `models` (turbo) scans each category once per model and ignores the once-a-period and
+  // one-open-ticket-per-category limits; the verifier still drops duplicates of open work.
+  // Returns the number of tickets filed.
   async plan(
     repo: Repo,
     apply = false,
     period: Period = "week",
-  ): Promise<void> {
+    models?: string[],
+  ): Promise<number> {
     const gh = this.github(repo);
     const selected = repo.categories ?? categoryNames;
     const existing = new Map(
@@ -246,54 +250,66 @@ export class Runner {
     // Open PRs come back as issues too; the verifier checks a finding against both.
     const work = parse(z.array(Issue), await gh.pages("issues?state=open"));
     const open = work.filter((issue) => !Object.hasOwn(issue, "pull_request"));
+    let filedCount = 0;
     for (const category of selected) {
       const label = `milo:${category}`;
       const key = periodKey(period, new Date(), scanEveryDays[category]);
-      if (!shouldScan(existing.get(label), key, open, category)) continue;
-      const found = await this.scan(
-        repo,
-        category,
-        work.map(({ number, title }) => ({ number, title })),
-        await this.rejected(gh, label),
-      );
-      if (!apply) {
-        console.log(
-          JSON.stringify({ repository: repo.name, category, found }, null, 2),
-        );
+      if (!models && !shouldScan(existing.get(label), key, open, category))
         continue;
-      }
-      if (found) {
-        const filed = parse(
-          Link.extend({ number: z.number() }),
-          await gh.api(
-            "issues",
-            "POST",
-            ticketDraft(found, repo, category, key),
-          ),
-        );
-        console.log(filed.html_url);
-        // A native dependency, not prose, is what makes runTasks wait; PRs can't block an issue.
-        for (const blocker of open.filter((issue) =>
-          found.blockedBy.includes(issue.number),
-        )) {
-          const { id } = parse(
-            z.object({ id: z.number() }),
-            await gh.api(`issues/${blocker.number}`),
+      const known = work.map(({ number, title }) => ({ number, title }));
+      const rejected = await this.rejected(gh, label);
+      // Models scan in turn, so each verifier sees the tickets earlier models filed.
+      for (const model of models ?? [undefined]) {
+        const found = await this.scan(repo, category, known, rejected, model);
+        if (!apply) {
+          console.log(
+            JSON.stringify(
+              { repository: repo.name, category, model, found },
+              null,
+              2,
+            ),
           );
-          await gh.api(
-            `issues/${filed.number}/dependencies/blocked_by`,
-            "POST",
-            {
-              issue_id: id,
-            },
-          );
+          continue;
         }
-      } else
-        console.log(`${repo.name}: ${category} scan found nothing verified`);
-      await gh.api(`labels/${encodeURIComponent(label)}`, "PATCH", {
-        description: scannedNote(key),
-      });
+        if (found) {
+          const filed = parse(
+            Link.extend({ number: z.number() }),
+            await gh.api(
+              "issues",
+              "POST",
+              ticketDraft(found, repo, category, key),
+            ),
+          );
+          console.log(filed.html_url);
+          filedCount++;
+          known.push({ number: filed.number, title: found.title });
+          // A native dependency, not prose, is what makes runTasks wait; PRs can't block an issue.
+          for (const blocker of open.filter((issue) =>
+            found.blockedBy.includes(issue.number),
+          )) {
+            const { id } = parse(
+              z.object({ id: z.number() }),
+              await gh.api(`issues/${blocker.number}`),
+            );
+            await gh.api(
+              `issues/${filed.number}/dependencies/blocked_by`,
+              "POST",
+              {
+                issue_id: id,
+              },
+            );
+          }
+        } else
+          console.log(
+            `${repo.name}: ${category} scan${model ? ` (${model})` : ""} found nothing verified`,
+          );
+      }
+      if (apply)
+        await gh.api(`labels/${encodeURIComponent(label)}`, "PATCH", {
+          description: scannedNote(key),
+        });
     }
+    return filedCount;
   }
   // Tickets a maintainer closed as not planned, with the last maintainer comment as the reason.
   // CEILING: reads only the 100 most recently updated closed tickets in the category; page further if rejections get buried.
@@ -332,15 +348,22 @@ export class Runner {
     category: Category,
     work: { number: number; title: string }[],
     rejected: Rejection[],
+    model?: string,
   ): Promise<Finding | undefined> {
     return temporary("milo-scan-", async (folder) => {
       const root = join(folder, "repo");
       const workspace = await openWorkspace(repo, root, this.cloneRepo);
       const report = await runAgent(
-        this.config,
+        model
+          ? {
+              ...this.config,
+              agent: { ...this.config.agent, scanModel: model },
+            }
+          : this.config,
         root,
         scanPrompt(
           category,
+          work,
           rejected,
           projectContext(await inspectProject(root, repo)),
         ),
@@ -867,6 +890,18 @@ export class Runner {
     if (category && repo.categories && !repo.categories.includes(category))
       throw new Error("Category is disabled for this repository");
     const scoped = category ? { ...repo, categories: [category] } : repo;
+    for await (const number of this.readyTickets(repo, category)) {
+      await this.work(repo, number, category);
+      break;
+    }
+    // Work first, so a failing scan cannot starve approved tickets.
+    await this.plan(scoped, true, period);
+  }
+  // Approved, unblocked tickets without a PR, oldest first; lazy, so a caller that takes one makes no further checks.
+  private async *readyTickets(
+    repo: Repo,
+    category?: Category,
+  ): AsyncGenerator<number> {
     const gh = this.github(repo);
     for (const issue of parse(
       z.array(Issue),
@@ -884,13 +919,21 @@ export class Runner {
       }
       if (!(await trustedAuthor(gh, issue))) continue;
       if (await this.existingPr(gh, repo, issue.number)) continue;
-      await this.work(repo, issue.number, category);
-      break;
+      yield issue.number;
     }
-    // Work first, so a failing scan cannot starve approved tickets.
-    await this.plan(scoped, true, period);
   }
   async runReviews(repo: Repo): Promise<void> {
+    for await (const [, job] of this.reviewJobs(repo)) {
+      await job();
+      break;
+    }
+  }
+  // Merges what is ready on the way, and yields the agent step each remaining Milo PR needs.
+  // PRs `busy` names are left alone: something is already working on them.
+  private async *reviewJobs(
+    repo: Repo,
+    busy: (pr: PullRequest) => boolean = () => false,
+  ): AsyncGenerator<[number, () => Promise<void>]> {
     const gh = this.github(repo);
     for (const pr of parse(
       z.array(PullRequest),
@@ -901,6 +944,7 @@ export class Runner {
       } catch {
         continue;
       }
+      if (busy(pr)) continue;
       const requests = await this.requests(gh, pr.number, pr.head.sha);
       const step = nextReviewStep(
         pr.head.sha,
@@ -909,24 +953,132 @@ export class Runner {
       );
       if (step === "merge") await this.merge(gh, repo, pr);
       if (step === "merge" || step === "skip") continue;
-      if (step === "revise")
-        await this.attempt(gh, pr, requests, () =>
-          this.revise(repo, pr.number),
-        );
-      else if (step === "fix")
-        await this.attempt(
-          gh,
-          pr,
-          [],
-          () => this.revise(repo, pr.number, true),
-          true,
-        );
-      else
-        await this.attempt(gh, pr, [], () =>
-          this.review(repo, pr.number).then(() => true),
-        );
-      break;
+      yield [
+        pr.number,
+        step === "revise"
+          ? () =>
+              this.attempt(gh, pr, requests, () => this.revise(repo, pr.number))
+          : step === "fix"
+            ? () =>
+                this.attempt(
+                  gh,
+                  pr,
+                  [],
+                  () => this.revise(repo, pr.number, true),
+                  true,
+                )
+            : () =>
+                this.attempt(gh, pr, [], () =>
+                  this.review(repo, pr.number).then(() => true),
+                ),
+      ];
     }
+  }
+  // A tick across all repos at once, built to fill the pipeline fast: every ready ticket, every
+  // PR's next review step, and a scan of each category by each of `scanModels`, on up to `agents`
+  // concurrent agents. Each job clones into its own folder. With `loop`, every finished job
+  // triggers a fresh look, so a new PR's review starts as soon as a slot frees, and a scan that
+  // filed something runs again; it ends when nothing is running and nothing is left to start.
+  // Returns "job: reason" for each failure.
+  async turbo(
+    repos: Repo[],
+    {
+      agents = 20,
+      period = "week" as Period,
+      loop = false,
+      scanModels = ["claude-fable-5-1", "claude-sonnet-5-5"],
+    } = {},
+  ): Promise<string[]> {
+    // A spending stop for a job that keeps coming back: a PR takes about five review rounds at most.
+    const maxRuns = 10;
+    type Job = [key: string, run: () => Promise<boolean | undefined>];
+    const failures: string[] = [];
+    // Tickets and PR steps go before scans, so reviews never wait behind a scan.
+    const ready: Job[] = [];
+    const scans: Job[] = [];
+    const active = new Set<string>(); // queued or running
+    const done = new Set<string>(); // failed or out of runs: not retried this run
+    const runs = new Map<string, number>();
+    const add = (queue: Job[], key: string, run: Job[1]) => {
+      if (active.has(key) || done.has(key)) return;
+      if ((runs.get(key) ?? 0) >= maxRuns) {
+        done.add(key);
+        failures.push(`${key}: stopped after ${maxRuns} runs`);
+        return;
+      }
+      active.add(key);
+      queue.push([key, run]);
+    };
+    // CEILING: reads every repo's tickets and PRs after each finished job; with many repos or a
+    // tight GitHub rate limit, rediscover only the repo whose job finished.
+    const discover = async () => {
+      for (const repo of repos) {
+        for await (const number of this.readyTickets(repo))
+          add(ready, `${repo.name}#${number}`, () =>
+            this.work(repo, number).then(() => false),
+          );
+        // A PR whose ticket is still being worked is not finished yet.
+        const busy = (pr: PullRequest) =>
+          active.has(`${repo.name} PR#${pr.number}`) ||
+          active.has(`${repo.name}#${ticketNumber(pr.head.ref)}`);
+        for await (const [number, job] of this.reviewJobs(repo, busy))
+          add(ready, `${repo.name} PR#${number}`, () =>
+            job().then(() => false),
+          );
+      }
+    };
+    // Shared labels first: concurrent category scans would race to create them.
+    for (const repo of repos)
+      await this.plan({ ...repo, categories: [] }, true);
+    await discover();
+    for (const repo of repos)
+      for (const category of repo.categories ?? categoryNames) {
+        const key = `${repo.name} ${category} scan`;
+        // A scan that filed something may find more; one that found nothing is done this run.
+        const scan = async () => {
+          const filed = await this.plan(
+            { ...repo, categories: [category] },
+            true,
+            period,
+            scanModels,
+          );
+          return loop && filed > 0;
+        };
+        add(scans, key, scan);
+      }
+    const running = new Set<Promise<void>>();
+    const start = ([key, run]: Job) => {
+      runs.set(key, (runs.get(key) ?? 0) + 1);
+      console.log(`Started ${key}`);
+      const task: Promise<void> = run()
+        .then(
+          (again) => {
+            console.log(`Finished ${key}`);
+            active.delete(key);
+            if (again) add(scans, key, run);
+          },
+          (error) => {
+            active.delete(key);
+            done.add(key);
+            failures.push(
+              `${key}: ${error instanceof Error ? error.message : "Unknown failure"}`,
+            );
+          },
+        )
+        .finally(() => running.delete(task));
+      running.add(task);
+    };
+    for (;;) {
+      while (running.size < agents) {
+        const job = ready.shift() ?? scans.shift();
+        if (!job) break;
+        start(job);
+      }
+      if (!running.size) break;
+      await Promise.race(running);
+      if (loop) await discover();
+    }
+    return failures;
   }
   async tick(repo: Repo): Promise<void> {
     await this.runTasks(repo);

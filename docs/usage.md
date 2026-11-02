@@ -43,9 +43,17 @@ bun run milo --repo owner/repo work 12
 bun run milo --repo owner/repo review 34
 bun run milo --repo owner/repo revise 34
 bun run milo tick
+bun run milo turbo --agents 20         # Every ready ticket, PR step and scan, 20 agents at once
+bun run milo turbo --loop              # Repeat: scan, file, work, review, fix, until nothing is left
 bun run milo --config examples/ecosystem.json --category security --period day task
 bun run milo --config examples/ecosystem.json reviews
 ```
+
+`turbo` fills the pipeline faster than the schedule: across every configured repo (or `--repo`), it works every ready ticket, takes every Milo PR's next review step and scans every category, on up to `--agents` (1 to 20, default 20) concurrent agents. Each job clones into its own folder. Turbo scans skip the once-a-day and one-open-ticket-per-category limits, and each category is scanned by every model in `--scan-models` (default `claude-fable-5-1,claude-sonnet-5-5`), one after another so each verifier sees what the last one filed. Scanners are told to skip what open tickets cover. Edits still run on Opus 5.5 and reviews on Sonnet 5.5 unless your config sets models.
+
+Without `--loop`, turbo works from what existed when it started. With `--loop`, every finished job triggers a fresh look, so a ticket a scan files is worked, and a PR is reviewed, as soon as an agent is free. Tickets and PR steps go before scans. A scan that filed something runs again, and one that found nothing is done for the run. The run ends when nothing is running and nothing is left to start. Only ready tickets are worked: list categories in `autoReady` if you want every verified ticket worked without your approval. A PR waits after two fix rounds or for your change request. A failed job is not retried in the same run, and any job that comes back 10 times is stopped and reported.
+
+Turbo spends fast: up to `--agents` calls at once, each capped at `maxBudgetUsd`, and Fable costs 2.5 times Opus. Set a provider spending limit first, and lower `--agents` if you hit rate limits. Don't run it while the scheduled workflow runs, or both may take the same ticket.
 
 The agent reads its prompt from stdin. A custom `agent.command` is an argv array: `{output}` is the final report path, `{schema}` is a JSON Schema file and `{sandbox}` is `workspace-write` or `read-only`. For scans, verifiers and reviews, the agent must write JSON matching `{schema}` to `{output}`. Use it to run another agent or a sandboxed wrapper.
 

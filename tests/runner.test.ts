@@ -193,6 +193,11 @@ await Bun.write(Bun.argv[2]!, !verify
     const count = (await Bun.file(calls).text()).length;
     await runner.plan(repo, true, "day");
     expect((await Bun.file(calls).text()).length).toBe(count);
+    // Turbo ignores those notes and scans each category once per model: two models, two
+    // categories, a scan and a verify each. The scanner is told to skip open work.
+    expect(await runner.plan(repo, true, "day", ["a", "b"])).toBe(2);
+    expect((await Bun.file(calls).text()).length).toBe(count + 8);
+    expect(await Bun.file(scanPrompt).text()).toContain("Open tickets and PRs");
   }));
 test("malformed GitHub responses fail before Milo acts on them", async () => {
   const gh: GitHubClient = {
@@ -263,7 +268,7 @@ test("only tickets written by Milo or a repository writer run", async () => {
     await expect(runner.work(repo, number)).rejects.toThrow(
       "Ticket must be written by Milo or a repository writer",
     );
-  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   try {
     await runner.runTasks(repo);
@@ -313,7 +318,7 @@ test("a ticket that already has a PR is skipped for the next ticket", async () =
   const repo = { name: "owner/repo" };
   // work() itself stops before cloning when the PR exists.
   await runner.work(repo, 3);
-  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   try {
     await runner.runTasks(repo);
@@ -355,7 +360,7 @@ test("a ticket with an open blocker waits; closed blockers and missing data do n
     () => gh,
   );
   const repo = { name: "owner/repo" };
-  const plan = spyOn(runner, "plan").mockResolvedValue(undefined);
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
   try {
     await runner.runTasks(repo);
@@ -367,6 +372,144 @@ test("a ticket with an open blocker waits; closed blockers and missing data do n
   } finally {
     plan.mockRestore();
     work.mockRestore();
+  }
+});
+function turboFixture(tickets: { current: Issue[] }) {
+  const gh: GitHubClient = {
+    async api() {
+      throw new Error("Unexpected api call");
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      if (endpoint.startsWith("issues?")) return tickets.current as T[];
+      if (endpoint === "pulls?state=all&head=owner:milo/issue-4")
+        return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
+      return [];
+    },
+    async comment() {
+      throw new Error("Unexpected comment");
+    },
+    async viewer() {
+      return "milo";
+    },
+  };
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    () => gh,
+  );
+  return {
+    runner,
+    repo: { name: "owner/repo", categories: ["bugs" as const] },
+  };
+}
+test("turbo works every ready ticket at most `agents` at a time and collects failures", async () => {
+  const { runner, repo } = turboFixture({
+    current: [3, 4, 5, 6, 7].map((number) => ({ ...issue(), number })),
+  });
+  let running = 0;
+  let peak = 0;
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
+  const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
+    peak = Math.max(peak, ++running);
+    await Bun.sleep(5);
+    running--;
+    if (number === 5) throw new Error("checks failed");
+  });
+  try {
+    expect(
+      await runner.turbo([repo], {
+        agents: 2,
+        period: "day",
+        scanModels: ["m"],
+      }),
+    ).toEqual(["owner/repo#5: checks failed"]);
+    // #4 already has a PR.
+    expect(work.mock.calls.map(([, number]) => number).sort()).toEqual([
+      3, 5, 6, 7,
+    ]);
+    expect(peak).toBe(2);
+    // Shared labels first, then one scan per category with the chosen models.
+    expect(plan.mock.calls).toEqual([
+      [{ ...repo, categories: [] }, true],
+      [repo, true, "day", ["m"]],
+    ]);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
+test("turbo --loop rescans while scans file, and stops a job that keeps coming back", async () => {
+  const tickets = { current: [{ ...issue(), number: 3 }] };
+  const { runner, repo } = turboFixture(tickets);
+  // The first scan files ready ticket #8; the next finds nothing, so scanning ends.
+  let scans = 0;
+  const plan = spyOn(runner, "plan").mockImplementation(async (scoped) => {
+    if (!scoped.categories?.length || ++scans > 1) return 0;
+    tickets.current.push({ ...issue(), number: 8 });
+    return 1;
+  });
+  const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
+    tickets.current = tickets.current.filter((t) => t.number !== number);
+  });
+  try {
+    expect(await runner.turbo([repo], { loop: true })).toEqual([]);
+    expect(work.mock.calls.map(([, number]) => number)).toEqual([3, 8]);
+    expect(scans).toBe(2);
+    // A ticket that never leaves the queue stops at the cap instead of spending forever.
+    tickets.current = [{ ...issue(), number: 9 }];
+    work.mockReset();
+    work.mockResolvedValue(undefined);
+    expect(await runner.turbo([repo], { loop: true })).toEqual([
+      "owner/repo#9: stopped after 10 runs",
+    ]);
+    expect(work).toHaveBeenCalledTimes(10);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
+test("turbo --loop starts a new PR's review while a scan is still running", async () => {
+  const tickets = { current: [{ ...issue(), number: 3 }] };
+  const { runner, repo } = turboFixture(tickets);
+  const events: string[] = [];
+  let finishScan = () => {};
+  const scanning = new Promise<void>((resolve) => {
+    finishScan = resolve;
+  });
+  const plan = spyOn(runner, "plan").mockImplementation(async (scoped) => {
+    if (!scoped.categories?.length) return 0;
+    events.push("scan started");
+    await scanning;
+    events.push("scan finished");
+    return 0;
+  });
+  let opened = false;
+  const work = spyOn(runner, "work").mockImplementation(async () => {
+    tickets.current = [];
+    opened = true;
+  });
+  // Stands in for PR #9 that working #3 opened; it needs one review.
+  const jobs = spyOn(
+    runner as unknown as {
+      reviewJobs: () => AsyncGenerator<[number, () => Promise<void>]>;
+    },
+    "reviewJobs",
+  ).mockImplementation(async function* () {
+    if (!opened || events.includes("reviewed")) return;
+    yield [
+      9,
+      async () => {
+        events.push("reviewed");
+        finishScan();
+      },
+    ];
+  });
+  try {
+    expect(await runner.turbo([repo], { loop: true })).toEqual([]);
+    expect(events).toEqual(["scan started", "reviewed", "scan finished"]);
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+    jobs.mockRestore();
   }
 });
 test("child processes lose GitHub credentials and time out", async () => {

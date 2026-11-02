@@ -121,7 +121,7 @@ const Repo = z
   );
 export type Repo = z.infer<typeof Repo>;
 const timeout = "agent.timeoutSeconds must be an integer between 1 and 3600";
-const Model = (field: string) =>
+export const Model = (field: string) =>
   z
     .string()
     .regex(
