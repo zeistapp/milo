@@ -67,6 +67,17 @@ runs:
         path: ${{ runner.temp }}/milo-apt/*.deb
         key: ${{ steps.apt.outputs.prefix }}
         restore-keys: ${{ steps.apt.outputs.prefix }}
+    # A target's test sites, builds and browsers filled a hosted runner's disk (ENOSPC, zeist#86). Its preinstalled
+    # .NET, Android, GHC and CodeQL hold about 25 GB that no JavaScript check uses. The runner also pipes core
+    # dumps to systemd-coredump with no size limit; a plain core file obeys the process's own limit instead.
+    # Hosted runners only: a self-hosted machine keeps its toolchains and kernel settings.
+    - name: Free runner disk
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo sysctl -w kernel.core_pattern=core
+        df -h /
     # Setup and check steps run under bubblewrap; the Claude adapter's shell sandbox also needs socat.
     - name: Install sandbox
       if: runner.os == 'Linux'
