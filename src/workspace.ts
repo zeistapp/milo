@@ -2,6 +2,7 @@ import { lstatSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Repo } from "./config.ts";
+import { author } from "./github.ts";
 import { command } from "./process.ts";
 
 export type Git = (...args: string[]) => Promise<string>;
@@ -87,4 +88,17 @@ export async function openWorkspace(
         throw new Error("Read-only run changed files");
     },
   };
+}
+
+export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
+  await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
+  const [name, email] = await author();
+  for (const [key, value] of [
+    ["user.name", name],
+    ["user.email", email],
+    ["core.hooksPath", "/dev/null"],
+    ["credential.helper", "!gh auth git-credential"],
+  ] as const) {
+    await git("config", key, value);
+  }
 }

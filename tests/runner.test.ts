@@ -467,6 +467,35 @@ test("turbo --loop rescans while scans file, and stops a job that keeps coming b
     work.mockRestore();
   }
 });
+test("turbo --loop stops starting jobs when a look fails, and waits for running ones", async () => {
+  const { runner, repo } = turboFixture({ current: [] });
+  let looks = 0;
+  const tickets = spyOn(
+    runner as unknown as { readyTickets: () => AsyncGenerator<number> },
+    "readyTickets",
+  ).mockImplementation(async function* () {
+    if (looks++) throw new Error("GitHub is down");
+    yield* [3, 5, 6];
+  });
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
+  const finished: number[] = [];
+  const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
+    await Bun.sleep(number === 5 ? 20 : 1);
+    finished.push(number);
+  });
+  try {
+    expect(await runner.turbo(repo, { agents: 2, loop: true })).toEqual([
+      "look at owner/repo: GitHub is down",
+    ]);
+    // #5 was running when the look failed and finished; #6 and the scan never started.
+    expect(finished).toEqual([3, 5]);
+    expect(plan.mock.calls).toEqual([[{ ...repo, categories: [] }, true]]);
+  } finally {
+    tickets.mockRestore();
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
 test("turbo --loop starts a new PR's review while a scan is still running", async () => {
   const tickets = { current: [{ ...issue(), number: 3 }] };
   const { runner, repo } = turboFixture(tickets);
@@ -1101,7 +1130,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
     );
   }));
 
-// Policy lives in mergeAction and mergeFacts (tests/rules.test.ts); this checks Runner's wiring.
+// Policy lives in mergeDecision (tests/merge.test.ts); this checks Runner's wiring.
 test("auto-merge gates on the ticket, then merges, updates or logs without stopping later PRs", async () => {
   const repo: Repo = {
     name: "owner/repo",

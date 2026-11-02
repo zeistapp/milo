@@ -33,7 +33,7 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       category: { type: "string" },
       period: { type: "string" },
       "self-repo": { type: "string" },
-      agents: { type: "string", default: "20" },
+      agents: { type: "string", default: "4" },
       loop: { type: "boolean", default: false },
       "scan-models": {
         type: "string",
