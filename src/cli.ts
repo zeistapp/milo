@@ -138,6 +138,9 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   if (!numbered && target) throw new Error("Unexpected positional argument");
   const runner = new Runner(config);
   if (action === "turbo") {
+    // One repo per run: choose it explicitly, so a config change never widens the spend.
+    const repo = values.repo && repos[0];
+    if (!repo) throw new Error("Choose a repository for turbo with --repo");
     const agents = Number(values.agents);
     if (!Number.isInteger(agents) || agents < 1 || agents > 20)
       throw new Error("--agents must be a whole number from 1 to 20");
@@ -145,13 +148,13 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       z.array(Model("--scan-models").unwrap()).min(1),
       (values["scan-models"] ?? "").split(",").filter(Boolean),
     );
-    const failed = await runner.turbo(repos, {
+    const failed = await runner.turbo(repo, {
       agents,
       period,
       loop: values.loop,
       scanModels,
     });
-    for (const failure of failed) fail(failure);
+    for (const failure of failed) fail(`${repo.name} ${failure}`);
     if (failed.length) throw new Error(`${failed.length} turbo job(s) failed`);
     return;
   }

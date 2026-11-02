@@ -974,14 +974,14 @@ export class Runner {
       ];
     }
   }
-  // A tick across all repos at once, built to fill the pipeline fast: every ready ticket, every
-  // PR's next review step, and a scan of each category by each of `scanModels`, on up to `agents`
+  // A tick for one repo, built to fill its pipeline fast: every ready ticket, every PR's next
+  // review step, and a scan of each category by each of `scanModels`, on up to `agents`
   // concurrent agents. Each job clones into its own folder. With `loop`, every finished job
   // triggers a fresh look, so a new PR's review starts as soon as a slot frees, and a scan that
   // filed something runs again; it ends when nothing is running and nothing is left to start.
   // Returns "job: reason" for each failure.
   async turbo(
-    repos: Repo[],
+    repo: Repo,
     {
       agents = 20,
       period = "week" as Period,
@@ -991,11 +991,7 @@ export class Runner {
   ): Promise<string[]> {
     // A spending stop for a job that keeps coming back: a PR takes about five review rounds at most.
     const maxRuns = 10;
-    type Job = [
-      repo: Repo,
-      key: string,
-      run: () => Promise<boolean | undefined>,
-    ];
+    type Job = [key: string, run: () => Promise<boolean | undefined>];
     const failures: string[] = [];
     // Tickets and PR steps go before scans, so reviews never wait behind a scan.
     const ready: Job[] = [];
@@ -1003,7 +999,7 @@ export class Runner {
     const active = new Set<string>(); // queued or running
     const done = new Set<string>(); // failed or out of runs: not retried this run
     const runs = new Map<string, number>();
-    const add = (queue: Job[], repo: Repo, key: string, run: Job[2]) => {
+    const add = (queue: Job[], key: string, run: Job[1]) => {
       if (active.has(key) || done.has(key)) return;
       if ((runs.get(key) ?? 0) >= maxRuns) {
         done.add(key);
@@ -1011,46 +1007,38 @@ export class Runner {
         return;
       }
       active.add(key);
-      queue.push([repo, key, run]);
+      queue.push([key, run]);
     };
-    // Finding work reads one repo's tickets and PRs: a job only changes its own repo.
-    const discover = async (repo: Repo) => {
+    const discover = async () => {
       for await (const number of this.readyTickets(repo))
-        add(ready, repo, `${repo.name}#${number}`, () =>
+        add(ready, `#${number}`, () =>
           this.work(repo, number).then(() => false),
         );
       // A PR whose ticket is still being worked is not finished yet.
       const busy = (pr: PullRequest) =>
-        active.has(`${repo.name} PR#${pr.number}`) ||
-        active.has(`${repo.name}#${ticketNumber(pr.head.ref)}`);
+        active.has(`PR#${pr.number}`) ||
+        active.has(`#${ticketNumber(pr.head.ref)}`);
       for await (const [number, job] of this.reviewJobs(repo, busy))
-        add(ready, repo, `${repo.name} PR#${number}`, () =>
-          job().then(() => false),
-        );
+        add(ready, `PR#${number}`, () => job().then(() => false));
     };
     // Shared labels first: concurrent category scans would race to create them.
-    for (const repo of repos)
-      await this.plan({ ...repo, categories: [] }, true);
-    for (const repo of repos) await discover(repo);
-    for (const repo of repos)
-      for (const category of repo.categories ?? categoryNames) {
-        const key = `${repo.name} ${category} scan`;
-        // A scan that filed something may find more; one that found nothing is done this run.
-        const scan = async () => {
-          const filed = await this.plan(
-            { ...repo, categories: [category] },
-            true,
-            period,
-            scanModels,
-          );
-          return loop && filed > 0;
-        };
-        add(scans, repo, key, scan);
-      }
+    await this.plan({ ...repo, categories: [] }, true);
+    await discover();
+    // A scan that filed something may find more; one that found nothing is done this run.
+    for (const category of repo.categories ?? categoryNames)
+      add(scans, `${category} scan`, async () => {
+        const filed = await this.plan(
+          { ...repo, categories: [category] },
+          true,
+          period,
+          scanModels,
+        );
+        return loop && filed > 0;
+      });
     const running = new Set<Promise<void>>();
-    // Repos whose jobs finished since the last look; several can finish in one tick.
-    const finished = new Set<Repo>();
-    const start = ([repo, key, run]: Job) => {
+    // Set when a job finishes, including during a look, so no job's changes go unseen.
+    let changed = false;
+    const start = ([key, run]: Job) => {
       runs.set(key, (runs.get(key) ?? 0) + 1);
       console.log(`Started ${key}`);
       const task: Promise<void> = run()
@@ -1058,7 +1046,7 @@ export class Runner {
           (again) => {
             console.log(`Finished ${key}`);
             active.delete(key);
-            if (again) add(scans, repo, key, run);
+            if (again) add(scans, key, run);
           },
           (error) => {
             active.delete(key);
@@ -1070,7 +1058,7 @@ export class Runner {
         )
         .finally(() => {
           running.delete(task);
-          if (loop) finished.add(repo);
+          changed = loop;
         });
       running.add(task);
     };
@@ -1082,10 +1070,10 @@ export class Runner {
       }
       if (!running.size) break;
       await Promise.race(running);
-      // One repo at a time: each look runs alone, so two never merge the same PR.
-      for (const repo of finished) {
-        finished.delete(repo);
-        await discover(repo);
+      // Looks run one at a time, so two never merge the same PR.
+      while (changed) {
+        changed = false;
+        await discover();
       }
     }
     return failures;
