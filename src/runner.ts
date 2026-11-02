@@ -991,7 +991,11 @@ export class Runner {
   ): Promise<string[]> {
     // A spending stop for a job that keeps coming back: a PR takes about five review rounds at most.
     const maxRuns = 10;
-    type Job = [key: string, run: () => Promise<boolean | undefined>];
+    type Job = [
+      repo: Repo,
+      key: string,
+      run: () => Promise<boolean | undefined>,
+    ];
     const failures: string[] = [];
     // Tickets and PR steps go before scans, so reviews never wait behind a scan.
     const ready: Job[] = [];
@@ -999,7 +1003,7 @@ export class Runner {
     const active = new Set<string>(); // queued or running
     const done = new Set<string>(); // failed or out of runs: not retried this run
     const runs = new Map<string, number>();
-    const add = (queue: Job[], key: string, run: Job[1]) => {
+    const add = (queue: Job[], repo: Repo, key: string, run: Job[2]) => {
       if (active.has(key) || done.has(key)) return;
       if ((runs.get(key) ?? 0) >= maxRuns) {
         done.add(key);
@@ -1007,30 +1011,27 @@ export class Runner {
         return;
       }
       active.add(key);
-      queue.push([key, run]);
+      queue.push([repo, key, run]);
     };
-    // CEILING: reads every repo's tickets and PRs after each finished job; with many repos or a
-    // tight GitHub rate limit, rediscover only the repo whose job finished.
-    const discover = async () => {
-      for (const repo of repos) {
-        for await (const number of this.readyTickets(repo))
-          add(ready, `${repo.name}#${number}`, () =>
-            this.work(repo, number).then(() => false),
-          );
-        // A PR whose ticket is still being worked is not finished yet.
-        const busy = (pr: PullRequest) =>
-          active.has(`${repo.name} PR#${pr.number}`) ||
-          active.has(`${repo.name}#${ticketNumber(pr.head.ref)}`);
-        for await (const [number, job] of this.reviewJobs(repo, busy))
-          add(ready, `${repo.name} PR#${number}`, () =>
-            job().then(() => false),
-          );
-      }
+    // Finding work reads one repo's tickets and PRs: a job only changes its own repo.
+    const discover = async (repo: Repo) => {
+      for await (const number of this.readyTickets(repo))
+        add(ready, repo, `${repo.name}#${number}`, () =>
+          this.work(repo, number).then(() => false),
+        );
+      // A PR whose ticket is still being worked is not finished yet.
+      const busy = (pr: PullRequest) =>
+        active.has(`${repo.name} PR#${pr.number}`) ||
+        active.has(`${repo.name}#${ticketNumber(pr.head.ref)}`);
+      for await (const [number, job] of this.reviewJobs(repo, busy))
+        add(ready, repo, `${repo.name} PR#${number}`, () =>
+          job().then(() => false),
+        );
     };
     // Shared labels first: concurrent category scans would race to create them.
     for (const repo of repos)
       await this.plan({ ...repo, categories: [] }, true);
-    await discover();
+    for (const repo of repos) await discover(repo);
     for (const repo of repos)
       for (const category of repo.categories ?? categoryNames) {
         const key = `${repo.name} ${category} scan`;
@@ -1044,10 +1045,12 @@ export class Runner {
           );
           return loop && filed > 0;
         };
-        add(scans, key, scan);
+        add(scans, repo, key, scan);
       }
     const running = new Set<Promise<void>>();
-    const start = ([key, run]: Job) => {
+    // Repos whose jobs finished since the last look; several can finish in one tick.
+    const finished = new Set<Repo>();
+    const start = ([repo, key, run]: Job) => {
       runs.set(key, (runs.get(key) ?? 0) + 1);
       console.log(`Started ${key}`);
       const task: Promise<void> = run()
@@ -1055,7 +1058,7 @@ export class Runner {
           (again) => {
             console.log(`Finished ${key}`);
             active.delete(key);
-            if (again) add(scans, key, run);
+            if (again) add(scans, repo, key, run);
           },
           (error) => {
             active.delete(key);
@@ -1065,7 +1068,10 @@ export class Runner {
             );
           },
         )
-        .finally(() => running.delete(task));
+        .finally(() => {
+          running.delete(task);
+          if (loop) finished.add(repo);
+        });
       running.add(task);
     };
     for (;;) {
@@ -1076,7 +1082,11 @@ export class Runner {
       }
       if (!running.size) break;
       await Promise.race(running);
-      if (loop) await discover();
+      // One repo at a time: each look runs alone, so two never merge the same PR.
+      for (const repo of finished) {
+        finished.delete(repo);
+        await discover(repo);
+      }
     }
     return failures;
   }

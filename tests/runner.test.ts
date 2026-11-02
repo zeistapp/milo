@@ -512,6 +512,48 @@ test("turbo --loop starts a new PR's review while a scan is still running", asyn
     jobs.mockRestore();
   }
 });
+test("turbo --loop looks only at the repo whose job finished", async () => {
+  let tickets: Issue[] = [{ ...issue(), number: 3 }];
+  const looks = new Map<string, number>();
+  const client = (name: string): GitHubClient => ({
+    async api() {
+      throw new Error("Unexpected api call");
+    },
+    async pages<T>(endpoint: string): Promise<T[]> {
+      if (!endpoint.startsWith("issues?")) return [];
+      looks.set(name, (looks.get(name) ?? 0) + 1);
+      return (name === "owner/a" ? tickets : []) as T[];
+    },
+    async comment() {},
+    async viewer() {
+      return "milo";
+    },
+  });
+  const runner = new Runner(
+    { agent: { command: ["agent", "{output}"] }, repos: [] },
+    (repo) => client(repo.name),
+  );
+  // owner/b has no scans, so only the first look should ever touch it.
+  const a = { name: "owner/a", categories: [] };
+  const b = { name: "owner/b", categories: [] };
+  const plan = spyOn(runner, "plan").mockResolvedValue(0);
+  const work = spyOn(runner, "work").mockImplementation(async () => {
+    tickets = [];
+  });
+  try {
+    expect(await runner.turbo([a, b], { loop: true })).toEqual([]);
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(looks).toEqual(
+      new Map([
+        ["owner/a", 2],
+        ["owner/b", 1],
+      ]),
+    );
+  } finally {
+    plan.mockRestore();
+    work.mockRestore();
+  }
+});
 test("child processes lose GitHub credentials and time out", async () => {
   const github = [
     "GH_TOKEN",
