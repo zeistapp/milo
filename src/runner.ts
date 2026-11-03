@@ -258,9 +258,10 @@ export class Runner {
             dispatch({ type: "finished", key, again });
           },
           (error) => {
-            dispatch({ type: "failed", key, reason: reason(error) });
+            const why = reason(error);
+            dispatch({ type: "failed", key, reason: why });
             // Logged now as well as in the summary, so a watcher sees it while the run goes on.
-            console.log(`Failed ${state.failures.at(-1)}`);
+            console.log(`Failed ${key}: ${why}`);
           },
         )
         .finally(() => {

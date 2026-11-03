@@ -91,4 +91,10 @@ test("a PR is busy while its own step or its ticket is queued or running", () =>
   expect(prBusy(state, 7)).toBe(true);
   expect(prBusy(state, 9, 5)).toBe(false);
   expect(prBusy(state, 9)).toBe(false);
+  // A failed ticket stops holding its PR back.
+  const failed = run(
+    [started("#4"), { type: "failed", key: "#4", reason: "x" }],
+    state,
+  );
+  expect(prBusy(failed, 9, 4)).toBe(false);
 });
