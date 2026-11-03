@@ -1,10 +1,11 @@
 import { expect, spyOn, test } from "bun:test";
 import { main } from "../src/cli.ts";
 import { type Config, includeSelfRepo, type Repo } from "../src/config.ts";
-import type { GitHubClient, Issue } from "../src/github.ts";
+import type { Issue } from "../src/github.ts";
 import { temporary } from "../src/process.ts";
 import { periodKey } from "../src/rules.ts";
 import { Runner } from "../src/runner.ts";
+import { github } from "./helpers.ts";
 
 const config: Config = { agent: { command: ["agent", "{output}"] }, repos: [] };
 const repo: Repo = { name: "owner/repo" };
@@ -37,20 +38,12 @@ test("daily, weekly and monthly scans deduplicate at their actual cadence", () =
 });
 test("a dedicated task runner cannot consume another category or run reviews", async () => {
   const issues = [ticket(1, "security"), ticket(2, "simplify")];
-  const gh: GitHubClient = {
-    async api<T>(): Promise<T> {
-      throw new Error("Unexpected API write");
-    },
+  const gh = github({
+    viewer: async () => "bot",
     async pages<T>(endpoint: string): Promise<T[]> {
       return (endpoint.startsWith("issues?") ? issues : []) as T[];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "bot";
-    },
-  };
+  });
   const runner = new Runner(config, () => gh);
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);
@@ -72,20 +65,12 @@ test("an unscoped task runner works the oldest approved ticket of any category, 
     labels: [{ name: "milo:task" }, { name: "milo:ready" }],
   };
   const issues = [ticket(3, "cleanup"), uncategorised];
-  const gh: GitHubClient = {
-    async api<T>(): Promise<T> {
-      throw new Error("Unexpected API write");
-    },
+  const gh = github({
+    viewer: async () => "bot",
     async pages<T>(endpoint: string): Promise<T[]> {
       return (endpoint.startsWith("issues?") ? issues : []) as T[];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "bot";
-    },
-  };
+  });
   const runner = new Runner(config, () => gh);
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockResolvedValue(undefined);

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { minimumClaudeVersion } from "../src/claude.ts";
 import { command, temporary } from "../src/process.ts";
+import { withEnv } from "./helpers.ts";
 
 interface Script {
   id?: string;
@@ -56,11 +57,7 @@ test("distributed action reads the caller's config from an external working dire
       GITHUB_REPOSITORY: "owner/repo",
       MILO_LOG_DIR: "",
     };
-    const original = Object.fromEntries(
-      Object.keys(env).map((key) => [key, process.env[key]]),
-    );
-    try {
-      Object.assign(process.env, env);
+    await withEnv(env, async () => {
       expect(
         await command(["bash", "-c", script], { cwd: consumer }),
       ).toContain("Configuration valid");
@@ -103,12 +100,7 @@ test("distributed action reads the caller's config from an external working dire
         command(["bash", "-c", script], { cwd: consumer }),
       ).rejects.toThrow("failed");
       expect(await Bun.file(join(consumer, "injected")).exists()).toBeFalse();
-    } finally {
-      for (const [key, value] of Object.entries(original)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
+    });
   }));
 
 test("maintenance preflight installs only the configured provider's agent", () =>
@@ -142,19 +134,10 @@ test("maintenance preflight installs only the configured provider's agent", () =
         ANTHROPIC_API_KEY: "",
         ...env,
       };
-      const previous = Object.fromEntries(
-        Object.keys(all).map((key) => [key, process.env[key]]),
-      );
-      try {
-        Object.assign(process.env, all);
+      return withEnv(all, async () => {
         await command(["bash", "-c", script]);
         return (await Bun.file(output).text()).trim();
-      } finally {
-        for (const [key, value] of Object.entries(previous)) {
-          if (value === undefined) delete process.env[key];
-          else process.env[key] = value;
-        }
-      }
+      });
     };
     const anthropic = { ANTHROPIC_API_KEY: "fake-anthropic-key" };
     expect(await run("claude", anthropic)).toBe(`claude-version=${fallback}`);

@@ -5,6 +5,7 @@ import { mergeDecision, reviewMark } from "../src/merge.ts";
 import { command, temporary } from "../src/process.ts";
 import type { ReviewResult } from "../src/rules.ts";
 import type { Git } from "../src/workspace.ts";
+import { github as stub } from "./helpers.ts";
 
 const pr: PullRequest = {
   number: 34,
@@ -34,7 +35,7 @@ function github({
   status = noStatus,
   behindBy = 0,
 }): GitHubClient {
-  return {
+  return stub({
     async api<T>(endpoint: string): Promise<T> {
       const responses: Record<string, unknown> = {
         "commits/abc/status": status,
@@ -48,10 +49,7 @@ function github({
       return (endpoint === "pulls/34/reviews" ? reviews : []) as T[];
     },
     async comment() {},
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
 }
 type Kind = Awaited<ReturnType<typeof mergeDecision>>["kind"];
 const decide = async (facts: Parameters<typeof github>[0]) =>
