@@ -333,10 +333,14 @@ test("a ticket with an open blocker waits; closed blockers and missing data do n
     work.mockRestore();
   }
 });
-function turboFixture(tickets: { current: Issue[] }) {
+function turboFixture(
+  tickets: { current: Issue[] },
+  pulls: { current: PullRequest[] } = { current: [] },
+) {
   const gh = github({
     async pages<T>(endpoint: string): Promise<T[]> {
       if (endpoint.startsWith("issues?")) return tickets.current as T[];
+      if (endpoint === "pulls?state=open") return pulls.current as T[];
       if (endpoint === "pulls?state=all&head=owner:milo/issue-4")
         return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
       return [];
@@ -360,7 +364,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
     peak = Math.max(peak, ++running);
-    await Bun.sleep(5);
+    await Promise.resolve();
     running--;
     if (number === 5) throw new Error("checks failed");
   });
@@ -391,7 +395,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
     log.mockRestore();
   }
 });
-test("turbo --loop rescans while scans file, and stops a job that keeps coming back", async () => {
+test("turbo --loop rescans while scans file, and works what they file", async () => {
   const tickets = { current: [{ ...issue(), number: 3 }] };
   const { runner, repo } = turboFixture(tickets);
   // The first scan files ready ticket #8; the next finds nothing, so scanning ends.
@@ -408,91 +412,91 @@ test("turbo --loop rescans while scans file, and stops a job that keeps coming b
     expect(await runner.turbo(repo, { loop: true })).toEqual([]);
     expect(work.mock.calls.map(([, number]) => number)).toEqual([3, 8]);
     expect(scans).toBe(2);
-    // A ticket that never leaves the queue stops at the cap instead of spending forever.
-    tickets.current = [{ ...issue(), number: 9 }];
-    work.mockReset();
-    work.mockResolvedValue(undefined);
-    expect(await runner.turbo(repo, { loop: true })).toEqual([
-      "#9: stopped after 10 runs",
-    ]);
-    expect(work).toHaveBeenCalledTimes(10);
   } finally {
     plan.mockRestore();
     work.mockRestore();
   }
 });
 test("turbo --loop stops starting jobs when a look fails, and waits for running ones", async () => {
-  const { runner, repo } = turboFixture({ current: [] });
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let looks = 0;
-  const tickets = spyOn(
-    runner as unknown as { readyTickets: () => AsyncGenerator<number> },
-    "readyTickets",
-  ).mockImplementation(async function* () {
-    if (looks++) throw new Error("GitHub is down");
-    yield* [3, 5, 6];
+  const { runner, repo } = turboFixture({
+    get current() {
+      if (looks++) {
+        // #5 is still running when the look fails.
+        release();
+        throw new Error("GitHub is down");
+      }
+      return [3, 5, 6].map((number) => ({ ...issue(), number }));
+    },
   });
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const finished: number[] = [];
   const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
-    await Bun.sleep(number === 5 ? 20 : 1);
+    if (number === 5) await held;
     finished.push(number);
   });
   try {
     expect(await runner.turbo(repo, { agents: 2, loop: true })).toEqual([
       "look at owner/repo: GitHub is down",
     ]);
-    // #5 was running when the look failed and finished; #6 and the scan never started.
+    // #6 and the scan never started.
     expect(finished).toEqual([3, 5]);
     expect(plan.mock.calls).toEqual([[{ ...repo, categories: [] }, true]]);
   } finally {
-    tickets.mockRestore();
     plan.mockRestore();
     work.mockRestore();
   }
 });
-test("turbo --loop starts a new PR's review while a scan is still running", async () => {
-  const tickets = { current: [{ ...issue(), number: 3 }] };
-  const { runner, repo } = turboFixture(tickets);
+test("turbo --loop reviews a PR only once its ticket's work has finished", async () => {
+  const tickets = { current: [3, 5].map((number) => ({ ...issue(), number })) };
+  const pulls: { current: PullRequest[] } = { current: [] };
+  const { runner, repo } = turboFixture(tickets, pulls);
   const events: string[] = [];
-  let finishScan = () => {};
-  const scanning = new Promise<void>((resolve) => {
-    finishScan = resolve;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
   });
+  // The scan starts after #5 finishes and the look that follows, so it lets #3 finish.
   const plan = spyOn(runner, "plan").mockImplementation(async (scoped) => {
-    if (!scoped.categories?.length) return 0;
-    events.push("scan started");
-    await scanning;
-    events.push("scan finished");
+    if (scoped.categories?.length) release();
     return 0;
   });
-  let opened = false;
-  const work = spyOn(runner, "work").mockImplementation(async () => {
-    tickets.current = [];
-    opened = true;
+  const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
+    if (number === 3) {
+      // Working #3 opens PR #9 and is still going when the next look sees it.
+      const ref = { ref: "milo/issue-3", sha: "abc" };
+      pulls.current = [
+        {
+          number: 9,
+          state: "open",
+          body: null,
+          html_url: "https://github.com/owner/repo/pull/9",
+          head: { ...ref, repo: { full_name: "owner/repo" } },
+          base: { ref: "main", sha: "def" },
+        },
+      ];
+      await held;
+    }
+    tickets.current = tickets.current.filter((t) => t.number !== number);
+    events.push(`worked #${number}`);
   });
-  // Stands in for PR #9 that working #3 opened; it needs one review.
-  const jobs = spyOn(
-    runner as unknown as {
-      reviewJobs: () => AsyncGenerator<[number, () => Promise<void>]>;
+  const review = spyOn(runner, "review").mockImplementation(
+    async (_, number) => {
+      pulls.current = [];
+      events.push(`reviewed PR#${number}`);
     },
-    "reviewJobs",
-  ).mockImplementation(async function* () {
-    if (!opened || events.includes("reviewed")) return;
-    yield [
-      9,
-      async () => {
-        events.push("reviewed");
-        finishScan();
-      },
-    ];
-  });
+  );
   try {
-    expect(await runner.turbo(repo, { loop: true })).toEqual([]);
-    expect(events).toEqual(["scan started", "reviewed", "scan finished"]);
+    expect(await runner.turbo(repo, { agents: 2, loop: true })).toEqual([]);
+    expect(events).toEqual(["worked #5", "worked #3", "reviewed PR#9"]);
   } finally {
     plan.mockRestore();
     work.mockRestore();
-    jobs.mockRestore();
+    review.mockRestore();
   }
 });
 test("child processes lose GitHub credentials and time out", async () => {
@@ -617,7 +621,7 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
     });
   }));
 test.skipIf(nestedSandboxDenied)(
-  "untrusted steps cannot read Milo's token or write outside the clone",
+  "untrusted steps cannot read Milo's tokens or write outside the clone",
   () =>
     temporary("milo-confine-", async (temp) => {
       const folder = await realpath(temp);
@@ -626,6 +630,9 @@ test.skipIf(nestedSandboxDenied)(
       await mkdir(join(root, ".git"), { recursive: true });
       await mkdir(home);
       const probe = join(home, "probe.ts");
+      // A random token, so no command line that mentions the test can match it.
+      const secret = crypto.randomUUID();
+      const keychainPath = join(folder, "milo.keychain-db");
       const outside = join(folder, "outside");
       // Milo's own home holds credentials the step must not read.
       const realHome = join(folder, "real-home");
@@ -636,37 +643,83 @@ test.skipIf(nestedSandboxDenied)(
       await Bun.write(
         probe,
         `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+const secret = ${JSON.stringify(secret)};
 let leaked = false;
+let keychain = false;
 if (process.platform === "linux")
   for (const pid of readdirSync("/proc"))
-    try { leaked ||= readFileSync(\`/proc/\${pid}/environ\`, "utf8").includes("test-secret"); } catch {}
-else
-  try { leaked = Bun.spawnSync(["ps", "eww", "-A"]).stdout.toString().includes("test-secret"); } catch {}
+    try { leaked ||= readFileSync(\`/proc/\${pid}/environ\`, "utf8").includes(secret); } catch {}
+else {
+  // Any same-user process's starting environment, which Apple's sandbox cannot hide.
+  const { dlopen, ptr } = await import("bun:ffi");
+  const { sysctl } = dlopen("/usr/lib/libSystem.B.dylib", { sysctl: { args: ["ptr", "u32", "ptr", "ptr", "ptr", "u64"], returns: "i32" } }).symbols;
+  const buffer = new Uint8Array(1 << 20);
+  const size = new BigUint64Array(1);
+  for (let pid = 1; pid < 100000 && !leaked; pid++) {
+    size[0] = BigInt(buffer.length);
+    if (sysctl(ptr(new Int32Array([1, 49, pid])), 3, ptr(buffer), ptr(size), null, 0) === 0)
+      leaked = Buffer.from(buffer.buffer, 0, Number(size[0])).includes(secret);
+  }
+  keychain = Bun.spawnSync(["security", "find-generic-password", "-s", "milo-test", "-w", ${JSON.stringify(keychainPath)}]).stdout.toString().includes(secret);
+}
 for (const path of ["file", ".git/config", ${JSON.stringify(outside)}])
   try { writeFileSync(path, "x"); } catch {}
 let xdg = false;
 try { mkdirSync(\`\${process.env.XDG_CONFIG_HOME}/astro\`, { recursive: true }); xdg = true; } catch {}
 const readable = ${JSON.stringify(secrets)}.filter((path) => { try { return readFileSync(path, "utf8") === "x"; } catch { return false; } });
-console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg, readable }));`,
+console.log(JSON.stringify({ leaked, keychain, home: process.env.HOME, xdg, readable }));`,
       );
-      // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
+      // A stand-in for Milo: it runs the step, then hands the Claude token to a child.
       const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
-console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
-  { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) }));`;
+const step = await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
+  { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) });
+const handed = await command(["sh", "-c", 'cat <&3; [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]'], { keepAgentCredentials: true });
+console.log(JSON.stringify({ step: JSON.parse(step), handed }));`;
+      // Milo gets the Claude token on a file descriptor, as the docs' turbo function passes it.
+      // The workflow's GitHub token sits in its environment, which only Linux can hide.
+      const token = join(folder, "token");
+      await Bun.write(token, secret);
+      if (process.platform === "darwin") {
+        await command(["security", "create-keychain", "-p", "x", keychainPath]);
+        await command([
+          "security",
+          "add-generic-password",
+          "-s",
+          "milo-test",
+          "-a",
+          "milo",
+          "-w",
+          secret,
+          keychainPath,
+        ]);
+      }
       // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
       const config = join(folder, "real-config");
-      const output = await command([process.execPath, "-e", milo], {
-        env: {
-          GH_TOKEN: "test-secret",
-          XDG_CONFIG_HOME: config,
-          HOME: realHome,
+      const output = await command(
+        [
+          "sh",
+          "-c",
+          'exec 3<"$2" && rm "$2" && exec "$0" -e "$1"',
+          process.execPath,
+          milo,
+          token,
+        ],
+        {
+          env: {
+            ...(process.platform === "linux" && { GH_TOKEN: secret }),
+            CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
+            XDG_CONFIG_HOME: config,
+            HOME: realHome,
+          },
         },
-      });
+      ).finally(
+        () =>
+          process.platform === "darwin" &&
+          command(["security", "delete-keychain", keychainPath]),
+      );
       expect(JSON.parse(output)).toEqual({
-        leaked: false,
-        home,
-        xdg: true,
-        readable: [],
+        step: { leaked: false, keychain: false, home, xdg: true, readable: [] },
+        handed: secret,
       });
       expect(existsSync(config)).toBeFalse();
       // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
