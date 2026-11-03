@@ -69,20 +69,23 @@ Do this setup once.
 
    ```sh
    turbo() {
-     local repo=${1:?usage: turbo owner/repo [flags]} workflow=${MILO_WORKFLOW:-Milo}
+     local repo=${1:?usage: turbo owner/repo [flags]} workflow=${MILO_WORKFLOW:-Milo} state
      shift
-     gh workflow disable "$workflow" -R "$repo" || return
+     state=$(gh workflow list --all -R "$repo" --json name,state \
+       -q ".[] | select(.name == \"$workflow\") | .state") || return
+     [[ -n $state ]] || { echo "No workflow named $workflow in $repo" >&2; return 1; }
+     [[ $state == active ]] && { gh workflow disable "$workflow" -R "$repo" || return; }
      {
        env -u ANTHROPIC_API_KEY \
          CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s milo-claude-token -w)" \
          bun run milo --repo "$repo" turbo "$@"
      } always {
-       gh workflow enable "$workflow" -R "$repo"
+       [[ $state == active ]] && gh workflow enable "$workflow" -R "$repo"
      }
    }
    ```
 
-Then run `turbo owner/repo --loop --agents 2` from your Milo checkout. The function turns that repo's Milo workflow off for the run and back on afterwards, even if you stop it with Ctrl-C. If the workflow has another name, set it with `MILO_WORKFLOW=<name> turbo owner/repo ...`. Run each repo in its own terminal; they share your subscription's usage limits, so keep the total number of agents low. The first time it reads the token, macOS asks for your login password: choose Always Allow.
+Then run `turbo owner/repo --loop --agents 2` from your Milo checkout. The function turns that repo's Milo workflow off for the run and back on afterwards, even if you stop it with Ctrl-C. A workflow that was already off stays off. If the workflow has another name, set it with `MILO_WORKFLOW=<name> turbo owner/repo ...`. Run each repo in its own terminal; they share your subscription's usage limits, so keep the total number of agents low. The first time it reads the token, macOS asks for your login password: choose Always Allow.
 
 With only `CLAUDE_CODE_OAUTH_TOKEN` set, each agent call runs outside bare mode, which ignores subscription tokens. It runs with no setting sources and a fresh config folder, so your hooks, plugins, memory and CLAUDE.md stay out. Its shell is sandboxed as usual. Subscription usage limits apply, so keep `--agents` low. Milo clones over HTTPS and pushes with your `gh` login, whatever `gh config get git_protocol` says. On macOS, the tests that start Milo's sandbox skip themselves when they already run inside it.
 
