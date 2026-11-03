@@ -1,8 +1,16 @@
-import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeSync,
+} from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
+import type { Writable } from "node:stream";
 import type { Argv, Step } from "./config.ts";
 
 // Both sandboxes (untrusted steps here, the agent's shell in claude.ts) hide these.
@@ -21,6 +29,15 @@ export const secretDirs = [
   ".codex",
   ".claude",
 ] as const;
+// On macOS any process can read the starting environment of another process run by the same
+// user (sysctl KERN_PROCARGS2), and Apple's sandbox cannot block it. So a Claude subscription
+// token can arrive on a file descriptor instead, the way Claude Code itself accepts one, and
+// Milo hands it to Claude the same way. Then no process holds it in its environment.
+const tokenFd = process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR;
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR;
+export const claudeToken = tokenFd
+  ? readFileSync(Number(tokenFd), "utf8").trim()
+  : undefined;
 export interface CommandOptions {
   cwd?: string;
   input?: string;
@@ -63,17 +80,22 @@ export async function command(
     env.GIT_CONFIG_KEY_0 = "credential.helper";
     env.GIT_CONFIG_VALUE_0 = "";
   }
+  const token = options.keepAgentCredentials ? claudeToken : undefined;
+  if (token) env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR = "3";
   const name = options.label ?? argv[0];
   return new Promise((resolve, reject) => {
     const log = options.logFile
       ? openSync(options.logFile, "w", 0o600)
       : undefined;
+    // Node types a fourth stdio entry as making every stream nullable; the first three are pipes.
     const child = spawn(argv[0], argv.slice(1), {
       cwd: options.cwd,
       env,
       detached: true,
-      stdio: "pipe",
-    });
+      stdio: ["pipe", "pipe", "pipe", token ? "pipe" : "ignore"],
+    }) as ChildProcessWithoutNullStreams;
+    // A child that never reads the token, such as `claude --version`, may close the pipe first.
+    if (token) (child.stdio[3] as Writable).on("error", () => {}).end(token);
     let stdout = "";
     let failure: Error | undefined;
     const writeLog = (chunk: string | Buffer) => {
@@ -137,11 +159,13 @@ export async function command(
     child.stdin.end(options.input ?? "");
   });
 }
-// Runs untrusted repository code with no view of other processes' environments, so it
-// cannot read Milo's tokens, and with writes limited to the clone (not .git), a scratch
+// Runs untrusted repository code with writes limited to the clone (not .git), a scratch
 // home (also its temp folder) and /tmp. On Linux, processes left behind die with the step.
 // Paths must be real paths: the macOS sandbox matches resolved paths.
-// CEILING: macOS has no process namespace, so leftover processes outlive the step, still confined.
+// On Linux it has no view of other processes, so it cannot read Milo's tokens.
+// CEILING: macOS has no process namespace, so leftover processes outlive the step, still
+// confined, and a step can read any same-user process's starting environment (see claudeToken).
+// A separate user per step would close that.
 export function confine(
   argv: Argv,
   root: string,
@@ -181,7 +205,8 @@ export function confine(
       ...argv,
     ];
   if (process.platform === "darwin") {
-    // Seatbelt also blocks setuid programs such as ps, which can read other processes' environments.
+    // Denying the security server keeps steps out of the keychain, which holds gh's token
+    // and the token the documented turbo function stores.
     const paths = (...dirs: string[]) =>
       dirs.map((dir) => `(subpath ${JSON.stringify(dir)})`).join(" ");
     return [
@@ -190,7 +215,8 @@ export function confine(
       "(version 1)(allow default)(deny file-write*)" +
         `(allow file-write* ${paths(root, home, "/private/tmp", "/dev")})` +
         `(deny file-write* ${paths(join(root, ".git"))})` +
-        `(deny file-read* ${paths(...secrets)})`,
+        `(deny file-read* ${paths(...secrets)})` +
+        '(deny mach-lookup (global-name "com.apple.SecurityServer"))',
       ...argv,
     ];
   }

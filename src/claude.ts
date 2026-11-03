@@ -4,6 +4,7 @@ import type { Agent, Argv } from "./config.ts";
 import {
   agentCredentials,
   CommandError,
+  claudeToken,
   command,
   keptLog,
   sandboxEnv,
@@ -150,7 +151,8 @@ export async function runClaude(
   let failure: CommandError | undefined;
   // An API key wins, so CI keeps bare mode.
   const subscription =
-    !process.env.ANTHROPIC_API_KEY && !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    !process.env.ANTHROPIC_API_KEY &&
+    !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeToken);
   const run = (config?: string) =>
     command(claudeCommand(root, home, readOnly, { ...flags, subscription }), {
       ...options,

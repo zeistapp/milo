@@ -684,7 +684,7 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
     }
   }));
 test.skipIf(nestedSandboxDenied)(
-  "untrusted steps cannot read Milo's token or write outside the clone",
+  "untrusted steps cannot read Milo's tokens or write outside the clone",
   () =>
     temporary("milo-confine-", async (temp) => {
       const folder = await realpath(temp);
@@ -693,6 +693,9 @@ test.skipIf(nestedSandboxDenied)(
       await mkdir(join(root, ".git"), { recursive: true });
       await mkdir(home);
       const probe = join(home, "probe.ts");
+      // A random token, so no command line that mentions the test can match it.
+      const secret = crypto.randomUUID();
+      const keychainPath = join(folder, "milo.keychain-db");
       const outside = join(folder, "outside");
       // Milo's own home holds credentials the step must not read.
       const realHome = join(folder, "real-home");
@@ -703,37 +706,83 @@ test.skipIf(nestedSandboxDenied)(
       await Bun.write(
         probe,
         `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+const secret = ${JSON.stringify(secret)};
 let leaked = false;
+let keychain = false;
 if (process.platform === "linux")
   for (const pid of readdirSync("/proc"))
-    try { leaked ||= readFileSync(\`/proc/\${pid}/environ\`, "utf8").includes("test-secret"); } catch {}
-else
-  try { leaked = Bun.spawnSync(["ps", "eww", "-A"]).stdout.toString().includes("test-secret"); } catch {}
+    try { leaked ||= readFileSync(\`/proc/\${pid}/environ\`, "utf8").includes(secret); } catch {}
+else {
+  // Any same-user process's starting environment, which Apple's sandbox cannot hide.
+  const { dlopen, ptr } = await import("bun:ffi");
+  const { sysctl } = dlopen("/usr/lib/libSystem.B.dylib", { sysctl: { args: ["ptr", "u32", "ptr", "ptr", "ptr", "u64"], returns: "i32" } }).symbols;
+  const buffer = new Uint8Array(1 << 20);
+  const size = new BigUint64Array(1);
+  for (let pid = 1; pid < 100000 && !leaked; pid++) {
+    size[0] = BigInt(buffer.length);
+    if (sysctl(ptr(new Int32Array([1, 49, pid])), 3, ptr(buffer), ptr(size), null, 0) === 0)
+      leaked = Buffer.from(buffer.buffer, 0, Number(size[0])).includes(secret);
+  }
+  keychain = Bun.spawnSync(["security", "find-generic-password", "-s", "milo-test", "-w", ${JSON.stringify(keychainPath)}]).stdout.toString().includes(secret);
+}
 for (const path of ["file", ".git/config", ${JSON.stringify(outside)}])
   try { writeFileSync(path, "x"); } catch {}
 let xdg = false;
 try { mkdirSync(\`\${process.env.XDG_CONFIG_HOME}/astro\`, { recursive: true }); xdg = true; } catch {}
 const readable = ${JSON.stringify(secrets)}.filter((path) => { try { return readFileSync(path, "utf8") === "x"; } catch { return false; } });
-console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg, readable }));`,
+console.log(JSON.stringify({ leaked, keychain, home: process.env.HOME, xdg, readable }));`,
       );
-      // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
+      // A stand-in for Milo: it runs the step, then hands the Claude token to a child.
       const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
-console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
-  { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) }));`;
+const step = await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
+  { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) });
+const handed = await command(["sh", "-c", 'cat <&3; [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]'], { keepAgentCredentials: true });
+console.log(JSON.stringify({ step: JSON.parse(step), handed }));`;
+      // Milo gets the Claude token on a file descriptor, as the docs' turbo function passes it.
+      // The workflow's GitHub token sits in its environment, which only Linux can hide.
+      const token = join(folder, "token");
+      await Bun.write(token, secret);
+      if (process.platform === "darwin") {
+        await command(["security", "create-keychain", "-p", "x", keychainPath]);
+        await command([
+          "security",
+          "add-generic-password",
+          "-s",
+          "milo-test",
+          "-a",
+          "milo",
+          "-w",
+          secret,
+          keychainPath,
+        ]);
+      }
       // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
       const config = join(folder, "real-config");
-      const output = await command([process.execPath, "-e", milo], {
-        env: {
-          GH_TOKEN: "test-secret",
-          XDG_CONFIG_HOME: config,
-          HOME: realHome,
+      const output = await command(
+        [
+          "sh",
+          "-c",
+          'exec 3<"$2" && rm "$2" && exec "$0" -e "$1"',
+          process.execPath,
+          milo,
+          token,
+        ],
+        {
+          env: {
+            ...(process.platform === "linux" && { GH_TOKEN: secret }),
+            CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
+            XDG_CONFIG_HOME: config,
+            HOME: realHome,
+          },
         },
-      });
+      ).finally(
+        () =>
+          process.platform === "darwin" &&
+          command(["security", "delete-keychain", keychainPath]),
+      );
       expect(JSON.parse(output)).toEqual({
-        leaked: false,
-        home,
-        xdg: true,
-        readable: [],
+        step: { leaked: false, keychain: false, home, xdg: true, readable: [] },
+        handed: secret,
       });
       expect(existsSync(config)).toBeFalse();
       // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
