@@ -26,7 +26,7 @@ The agent receives dependency declarations and must consult current official doc
 
 ## Run locally
 
-Requires Bun 1.4.3+, Git, GitHub CLI and a configured agent. Edit `milo.config.json` with repos you own. Install Claude Code 2.1.296+ and set `ANTHROPIC_API_KEY`. To use your Claude subscription instead, leave `ANTHROPIC_API_KEY` unset and export the token from `claude setup-token` as `CLAUDE_CODE_OAUTH_TOKEN`. Each agent call then runs outside bare mode, with a fresh config folder and no setting sources, so your hooks, plugins, memory and CLAUDE.md stay out. Subscription usage limits apply, so keep `--agents` low.
+Requires Bun 1.4.3+, Git, GitHub CLI and a configured agent. Edit `milo.config.json` with repos you own. Install Claude Code 2.1.296+ and set `ANTHROPIC_API_KEY`. To use your Claude subscription instead, see [Run turbo on your machine](#run-turbo-on-your-machine).
 
 ```sh
 bun install --frozen-lockfile
@@ -54,6 +54,36 @@ bun run milo --config examples/ecosystem.json reviews
 Without `--loop`, turbo works from what existed when it started. With `--loop`, every finished job triggers a fresh look at the repo, one look at a time, so a ticket a scan files is worked, and a PR is reviewed, as soon as an agent is free. Tickets and PR steps go before scans. A scan that filed something runs again, and one that found nothing is done for the run. The run ends when nothing is running and nothing is left to start. Only ready tickets are worked: list categories in `autoReady` if you want every verified ticket worked without your approval. A PR waits after two fix rounds or for your change request. A failed job is not retried in the same run, and any job that comes back 10 times is stopped and reported.
 
 Turbo spends fast: up to `--agents` calls at once, each capped at `maxBudgetUsd`, and Fable costs 2.5 times Opus. Set a provider spending limit before you raise `--agents`, and lower it if you hit rate limits. Don't run it while the scheduled workflow runs, or both may take the same ticket.
+
+### Run turbo on your machine
+
+Do this setup once.
+1. Run `claude setup-token` and copy the token it prints. It uses your Claude subscription instead of API credits and lasts about a year.
+2. Store it in the macOS keychain. Paste the token when asked for a password:
+
+   ```sh
+   security add-generic-password -a "$USER" -s milo-claude-token -w
+   ```
+
+3. Add this function to `~/.zshrc`, with your repo and the name of the workflow that runs Milo on it:
+
+   ```sh
+   turbo() {
+     local repo=owner/repo workflow=Milo
+     gh workflow disable "$workflow" -R "$repo" || return
+     {
+       env -u ANTHROPIC_API_KEY \
+         CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s milo-claude-token -w)" \
+         bun run milo --repo "$repo" turbo "$@"
+     } always {
+       gh workflow enable "$workflow" -R "$repo"
+     }
+   }
+   ```
+
+Then run `turbo --loop --agents 2` from your Milo checkout. The function turns the scheduled workflow off for the run and back on afterwards, even if you stop it with Ctrl-C. The first time it reads the token, macOS asks for your login password: choose Always Allow.
+
+With only `CLAUDE_CODE_OAUTH_TOKEN` set, each agent call runs outside bare mode, which ignores subscription tokens. It runs with no setting sources and a fresh config folder, so your hooks, plugins, memory and CLAUDE.md stay out. Its shell is sandboxed as usual. Subscription usage limits apply, so keep `--agents` low. Milo clones over HTTPS and pushes with your `gh` login, whatever `gh config get git_protocol` says. On macOS, the tests that start Milo's sandbox skip themselves when they already run inside it.
 
 The agent reads its prompt from stdin. A custom `agent.command` is an argv array: `{output}` is the final report path, `{schema}` is a JSON Schema file and `{sandbox}` is `workspace-write` or `read-only`. For scans, verifiers and reviews, the agent must write JSON matching `{schema}` to `{output}`. Use it to run another agent or a sandboxed wrapper.
 
