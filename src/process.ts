@@ -2,14 +2,24 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   writeSync,
 } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import type { Writable } from "node:stream";
 import type { Argv, Step } from "./config.ts";
 
@@ -70,6 +80,9 @@ export async function command(
       "GH_ENTERPRISE_TOKEN",
       "GITHUB_ENTERPRISE_TOKEN",
       "ACTIONS_RUNTIME_TOKEN",
+      // The agent socket signs as the developer's SSH keys; confine() also blocks its path.
+      "SSH_AUTH_SOCK",
+      "SSH_AGENT_PID",
     ])
       delete env[key];
     if (!options.keepAgentCredentials) {
@@ -173,6 +186,9 @@ export function confine(
   cwd: string,
 ): Argv {
   const secrets = secretDirs.map((dir) => join(homedir(), dir));
+  // command() drops SSH_AUTH_SOCK, but a step can still find the socket, so block its real path.
+  const agentSocket = socketRealPath(process.env.SSH_AUTH_SOCK);
+  const runtimeDir = process.env.XDG_RUNTIME_DIR;
   if (process.platform === "linux")
     return [
       "bwrap",
@@ -199,6 +215,11 @@ export function confine(
       home,
       home,
       ...secrets.filter(existsSync).flatMap((dir) => ["--tmpfs", dir]),
+      // Holds the keyring and gpg-agent SSH sockets and the session bus gh's keyring store uses.
+      ...(runtimeDir && existsSync(runtimeDir) ? ["--tmpfs", runtimeDir] : []),
+      // Last, so it also masks a socket inside the clone or home. A read-only mount alone
+      // does not block connecting to a socket.
+      ...(agentSocket ? ["--ro-bind", "/dev/null", agentSocket] : []),
       "--chdir",
       cwd,
       "--",
@@ -216,11 +237,28 @@ export function confine(
         `(allow file-write* ${paths(root, home, "/private/tmp", "/dev")})` +
         `(deny file-write* ${paths(join(root, ".git"))})` +
         `(deny file-read* ${paths(...secrets)})` +
-        '(deny mach-lookup (global-name "com.apple.SecurityServer"))',
+        '(deny mach-lookup (global-name "com.apple.SecurityServer"))' +
+        // launchd's own agent socket, plus Milo's SSH_AUTH_SOCK for agents such as 1Password.
+        '(deny network-outbound (remote unix-socket (path-regex #"^/private/var/run/com\\.apple\\.launchd\\.[^/]+/Listeners$")))' +
+        (agentSocket
+          ? `(deny network-outbound (remote unix-socket (path-literal ${JSON.stringify(agentSocket)})))`
+          : ""),
       ...argv,
     ];
   }
   throw new Error("Untrusted steps need a Linux or macOS sandbox");
+}
+// Bun's realpath fails on a socket (EOPNOTSUPP on macOS), so follow the links by hand and
+// resolve only the folder.
+function socketRealPath(path: string | undefined): string | undefined {
+  if (!path) return;
+  try {
+    for (let hops = 0; hops < 40 && lstatSync(path).isSymbolicLink(); hops++)
+      path = resolve(dirname(path), readlinkSync(path));
+    return join(realpathSync(dirname(path)), basename(path));
+  } catch {
+    return;
+  }
 }
 // Tools look up config and caches through XDG paths before HOME, and GitHub's runners point
 // those at the real home, which the sandbox makes read-only.

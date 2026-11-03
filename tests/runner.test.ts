@@ -1,7 +1,9 @@
 import { expect, spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, realpath } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import type { Argv, Config, Repo } from "../src/config.ts";
 import type { Issue, PullRequest, Review } from "../src/github.ts";
@@ -499,13 +501,15 @@ test("turbo --loop reviews a PR only once its ticket's work has finished", async
     review.mockRestore();
   }
 });
-test("child processes lose GitHub credentials and time out", async () => {
+test("child processes lose GitHub and SSH agent credentials and time out", async () => {
   const github = [
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
     "ACTIONS_RUNTIME_TOKEN",
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID",
   ];
   const agent = [
     "CODEX_API_KEY",
@@ -726,6 +730,46 @@ console.log(JSON.stringify({ step: JSON.parse(step), handed }));`;
       expect(await Bun.file(join(root, "file")).exists()).toBeTrue();
       expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();
       expect(await Bun.file(outside).exists()).toBeFalse();
+    }),
+);
+
+test.skipIf(nestedSandboxDenied)(
+  "untrusted steps cannot connect to Milo's SSH agent socket",
+  () =>
+    temporary("milo-agent-", async (temp) => {
+      const folder = await realpath(temp);
+      const root = join(folder, "repo");
+      const home = join(folder, "home");
+      await mkdir(join(root, ".git"), { recursive: true });
+      await mkdir(home);
+      // In the writable home, so neither /tmp's tmpfs nor a read-only mount is what blocks it.
+      const socket = join(home, "agent.sock");
+      const server = createServer((connection) => connection.end()).listen(
+        socket,
+      );
+      await once(server, "listening");
+      const connects = [
+        process.execPath,
+        "-e",
+        `const s = require("node:net").connect(${JSON.stringify(socket)});
+s.on("connect", () => { console.log("connected"); s.destroy(); });
+s.on("error", () => console.log("refused"));`,
+      ] as Argv;
+      try {
+        expect(await command(connects)).toBe("connected");
+        const argv = await withEnv({ SSH_AUTH_SOCK: socket }, () =>
+          confine(connects, root, home, root),
+        );
+        expect(
+          await command(argv, {
+            cwd: root,
+            trusted: false,
+            env: sandboxEnv(home),
+          }),
+        ).toBe("refused");
+      } finally {
+        server.close();
+      }
     }),
 );
 
