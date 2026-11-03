@@ -76,16 +76,15 @@ Do this setup once.
      [[ -n $state ]] || { echo "No workflow named $workflow in $repo" >&2; return 1; }
      [[ $state == active ]] && { gh workflow disable "$workflow" -R "$repo" || return; }
      {
-       env -u ANTHROPIC_API_KEY \
-         CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s milo-claude-token -w)" \
-         bun run milo --repo "$repo" turbo "$@"
+       env -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR=3 \
+         bun src/cli.ts --repo "$repo" turbo "$@" 3< <(security find-generic-password -s milo-claude-token -w)
      } always {
        [[ $state == active ]] && gh workflow enable "$workflow" -R "$repo"
      }
    }
    ```
 
-Then run `turbo owner/repo --loop --agents 2` from your Milo checkout. The function turns that repo's Milo workflow off for the run and back on afterwards, even if you stop it with Ctrl-C. A workflow that was already off stays off. If the workflow has another name, set it with `MILO_WORKFLOW=<name> turbo owner/repo ...`. Run each repo in its own terminal; they share your subscription's usage limits, so keep the total number of agents low. The first time it reads the token, macOS asks for your login password: choose Always Allow.
+Then run `turbo owner/repo --loop --agents 2` from your Milo checkout. The function turns that repo's Milo workflow off for the run and back on afterwards, even if you stop it with Ctrl-C. A workflow that was already off stays off. If the workflow has another name, set it with `MILO_WORKFLOW=<name> turbo owner/repo ...`. Run each repo in its own terminal; they share your subscription's usage limits, so keep the total number of agents low. The first time it reads the token, macOS asks for your login password: choose Always Allow. The token reaches Milo on file descriptor 3, not in its environment, because on macOS any process you run can read the starting environment of your other processes. Milo hands it to Claude the same way. Call `bun src/cli.ts` directly: `bun run` does not pass the descriptor on.
 
 With only `CLAUDE_CODE_OAUTH_TOKEN` set, each agent call runs outside bare mode, which ignores subscription tokens. It runs with no setting sources and a fresh config folder, so your hooks, plugins, memory and CLAUDE.md stay out. Its shell is sandboxed as usual. Subscription usage limits apply, so keep `--agents` low. Milo clones over HTTPS and pushes with your `gh` login, whatever `gh config get git_protocol` says. On macOS, the tests that start Milo's sandbox skip themselves when they already run inside it.
 
@@ -107,7 +106,7 @@ For unusual scripts, integration services or an aggregate monorepo pipeline, rep
 
 Command directories must stay inside the repo, including through symlinks. Supply both setup and checks for a static JS repo without a package manifest or lockfile. `setup: []` deliberately skips installation; checks cannot be empty. Use validation scripts that do not deploy or modify production data.
 
-Setup and check steps run in a sandbox: bubblewrap on Linux, Apple's built-in sandbox on macOS. They can write only to the clone (not `.git`), a scratch home that is also their temp folder, and `/tmp`. They cannot read other processes' environments, so they cannot reach Milo's tokens, and credential folders such as `~/.ssh` and `~/.config/gh` are hidden. On Linux, processes a step leaves running are killed when it ends. Steps that write elsewhere, such as global tool installs, fail. The agent's own sandboxed shell uses the same scratch home, so it can run what setup installed, such as Playwright's browsers. The action installs bubblewrap on Linux runners; self-hosted Linux runners need it installed with unprivileged user namespaces allowed.
+Setup and check steps run in a sandbox: bubblewrap on Linux, Apple's built-in sandbox on macOS. They can write only to the clone (not `.git`), a scratch home that is also their temp folder, and `/tmp`. Credential folders such as `~/.ssh` and `~/.config/gh` are hidden, and on macOS so is the keychain. On Linux steps cannot see other processes, so they cannot reach Milo's tokens. On macOS they can read the starting environment of any process run by the same user, and Apple's sandbox cannot block that, so a token in Milo's environment is exposed to steps there. Locally, pass the Claude token on a file descriptor as the turbo function does. In GitHub Actions, where tokens arrive in the environment, use Linux runners. On Linux, processes a step leaves running are killed when it ends. Steps that write elsewhere, such as global tool installs, fail. The agent's own sandboxed shell uses the same scratch home, so it can run what setup installed, such as Playwright's browsers. The action installs bubblewrap on Linux runners; self-hosted Linux runners need it installed with unprivileged user namespaces allowed.
 
 Steps run without sudo, so they cannot install system packages. List the ones they need in the repo entry, such as `"systemPackages": ["ffmpeg", "rsync"]`. On Linux, Milo installs a repo's packages with `apt-get`, outside the sandbox, just before that repo's first setup step, so runs that only triage, review or scan skip the install. The action caches the downloaded `.deb` files per runner image. Entries must be plain Debian package names: no options, `.deb` paths or version pins. On macOS the action skips them with a warning, and local runs never install them, so install them yourself there. A step can start its own bubblewrap sandbox inside Milo's; CI checks this on Ubuntu.
 

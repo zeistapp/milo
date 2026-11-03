@@ -120,6 +120,7 @@ runs:
         MILO_APT_ARCHIVES: ${{ steps.apt.outputs.prefix && format('{0}/milo-apt', runner.temp) || '' }}
       run: |
         if [ "$RUNNER_OS" = 'Windows' ]; then echo 'Milo currently supports Linux and macOS runners'; exit 1; fi
+        if [ "$RUNNER_OS" = 'macOS' ]; then echo "::warning::On macOS, setup and check steps can read Milo's tokens from its environment. Use a Linux runner."; fi
         args=(--config "$INPUT_CONFIG")
         if [ -n "$INPUT_REPO" ]; then args+=(--repo "$INPUT_REPO"); fi
         if [ -n "$INPUT_CATEGORY" ] && [[ "$INPUT_ACTION" =~ ^(task|plan|work)$ ]]; then args+=(--category "$INPUT_CATEGORY"); fi
