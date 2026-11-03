@@ -21,6 +21,7 @@ import {
 } from "../src/process.ts";
 import { fixedStamp, periodKey, reviewStamp } from "../src/rules.ts";
 import { Runner } from "../src/runner.ts";
+import { nestedSandboxDenied } from "./helpers.ts";
 
 function issue(body = "", state = "open"): Issue {
   return {
@@ -418,6 +419,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
     running--;
     if (number === 5) throw new Error("checks failed");
   });
+  const log = spyOn(console, "log").mockImplementation(() => {});
   try {
     expect(
       await runner.turbo(repo, {
@@ -431,6 +433,8 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
       3, 5, 6, 7,
     ]);
     expect(peak).toBe(2);
+    // A failure is logged as it happens, not only in the summary.
+    expect(log.mock.calls.flat()).toContain("Failed #5: checks failed");
     // Shared labels first, then one scan per category with the chosen models.
     expect(plan.mock.calls).toEqual([
       [{ ...repo, categories: [] }, true],
@@ -439,6 +443,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
   } finally {
     plan.mockRestore();
     work.mockRestore();
+    log.mockRestore();
   }
 });
 test("turbo --loop rescans while scans file, and stops a job that keeps coming back", async () => {
@@ -615,32 +620,35 @@ test("child processes lose GitHub credentials and time out", async () => {
   ).rejects.not.toThrow("private-value");
 });
 
-test("sandboxed steps keep their output in MILO_LOG_DIR for the failure artifact", () =>
-  temporary("milo-logs-", async (temp) => {
-    const folder = await realpath(temp);
-    const logs = join(folder, "logs");
-    process.env.MILO_LOG_DIR = logs;
-    try {
-      await expect(
-        sandboxed(
-          {
-            command: [
-              process.execPath,
-              "-e",
-              "console.error('why it broke');process.exit(1)",
-            ],
-          },
-          folder,
-          folder,
-        ),
-      ).rejects.toThrow("failed (exit 1)");
-    } finally {
-      delete process.env.MILO_LOG_DIR;
-    }
-    const [log] = [...new Bun.Glob("*.log").scanSync(logs)];
-    assert(log);
-    expect(await Bun.file(join(logs, log)).text()).toContain("why it broke");
-  }));
+test.skipIf(nestedSandboxDenied)(
+  "sandboxed steps keep their output in MILO_LOG_DIR for the failure artifact",
+  () =>
+    temporary("milo-logs-", async (temp) => {
+      const folder = await realpath(temp);
+      const logs = join(folder, "logs");
+      process.env.MILO_LOG_DIR = logs;
+      try {
+        await expect(
+          sandboxed(
+            {
+              command: [
+                process.execPath,
+                "-e",
+                "console.error('why it broke');process.exit(1)",
+              ],
+            },
+            folder,
+            folder,
+          ),
+        ).rejects.toThrow("failed (exit 1)");
+      } finally {
+        delete process.env.MILO_LOG_DIR;
+      }
+      const [log] = [...new Bun.Glob("*.log").scanSync(logs)];
+      assert(log);
+      expect(await Bun.file(join(logs, log)).text()).toContain("why it broke");
+    }),
+);
 test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =>
   temporary("milo-apt-", async (folder) => {
     const args = join(folder, "args");
@@ -675,24 +683,26 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
       else process.env.MILO_APT_ARCHIVES = archives;
     }
   }));
-test("untrusted steps cannot read Milo's token or write outside the clone", () =>
-  temporary("milo-confine-", async (temp) => {
-    const folder = await realpath(temp);
-    const root = join(folder, "repo");
-    const home = join(folder, "home");
-    await mkdir(join(root, ".git"), { recursive: true });
-    await mkdir(home);
-    const probe = join(home, "probe.ts");
-    const outside = join(folder, "outside");
-    // Milo's own home holds credentials the step must not read.
-    const realHome = join(folder, "real-home");
-    const secrets = [".ssh", ".aws", ".config/gh", ".codex", ".claude"].map(
-      (dir) => join(realHome, dir, "secret"),
-    );
-    for (const secret of secrets) await Bun.write(secret, "x");
-    await Bun.write(
-      probe,
-      `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+test.skipIf(nestedSandboxDenied)(
+  "untrusted steps cannot read Milo's token or write outside the clone",
+  () =>
+    temporary("milo-confine-", async (temp) => {
+      const folder = await realpath(temp);
+      const root = join(folder, "repo");
+      const home = join(folder, "home");
+      await mkdir(join(root, ".git"), { recursive: true });
+      await mkdir(home);
+      const probe = join(home, "probe.ts");
+      const outside = join(folder, "outside");
+      // Milo's own home holds credentials the step must not read.
+      const realHome = join(folder, "real-home");
+      const secrets = [".ssh", ".aws", ".config/gh", ".codex", ".claude"].map(
+        (dir) => join(realHome, dir, "secret"),
+      );
+      for (const secret of secrets) await Bun.write(secret, "x");
+      await Bun.write(
+        probe,
+        `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 let leaked = false;
 if (process.platform === "linux")
   for (const pid of readdirSync("/proc"))
@@ -705,28 +715,33 @@ let xdg = false;
 try { mkdirSync(\`\${process.env.XDG_CONFIG_HOME}/astro\`, { recursive: true }); xdg = true; } catch {}
 const readable = ${JSON.stringify(secrets)}.filter((path) => { try { return readFileSync(path, "utf8") === "x"; } catch { return false; } });
 console.log(JSON.stringify({ leaked, home: process.env.HOME, xdg, readable }));`,
-    );
-    // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
-    const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
+      );
+      // A stand-in for Milo: the token sits in its initial environment, as in the workflow.
+      const milo = `import { command, confine, sandboxEnv } from ${JSON.stringify(join(import.meta.dir, "../src/process.ts"))};
 console.log(await command(confine([process.execPath, ${JSON.stringify(probe)}], ${JSON.stringify(root)}, ${JSON.stringify(home)}, ${JSON.stringify(root)}),
   { cwd: ${JSON.stringify(root)}, trusted: false, env: sandboxEnv(${JSON.stringify(home)}) }));`;
-    // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
-    const config = join(folder, "real-config");
-    const output = await command([process.execPath, "-e", milo], {
-      env: { GH_TOKEN: "test-secret", XDG_CONFIG_HOME: config, HOME: realHome },
-    });
-    expect(JSON.parse(output)).toEqual({
-      leaked: false,
-      home,
-      xdg: true,
-      readable: [],
-    });
-    expect(existsSync(config)).toBeFalse();
-    // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
-    expect(await Bun.file(join(root, "file")).exists()).toBeTrue();
-    expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();
-    expect(await Bun.file(outside).exists()).toBeFalse();
-  }));
+      // Like a GitHub runner, Milo's XDG config path is outside anything the sandbox may write.
+      const config = join(folder, "real-config");
+      const output = await command([process.execPath, "-e", milo], {
+        env: {
+          GH_TOKEN: "test-secret",
+          XDG_CONFIG_HOME: config,
+          HOME: realHome,
+        },
+      });
+      expect(JSON.parse(output)).toEqual({
+        leaked: false,
+        home,
+        xdg: true,
+        readable: [],
+      });
+      expect(existsSync(config)).toBeFalse();
+      // Judge writes from outside the sandbox: on Linux a write to /tmp lands in the sandbox's own copy.
+      expect(await Bun.file(join(root, "file")).exists()).toBeTrue();
+      expect(await Bun.file(join(root, ".git/config")).exists()).toBeFalse();
+      expect(await Bun.file(outside).exists()).toBeFalse();
+    }),
+);
 
 // zeist's tests build sites under their own bubblewrap, which must start inside Milo's.
 test.if(process.platform === "linux")(
@@ -758,7 +773,7 @@ test.if(process.platform === "linux")(
     }),
 );
 
-test(
+test.skipIf(nestedSandboxDenied)(
   "real git and subprocess flow: ticket, PR, review, revision and retry deduplication",
   () =>
     temporary("milo-flow-", async (folder) => {
@@ -1019,120 +1034,123 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
   15_000,
 );
 
-test("review and revise publish nothing when the PR head moves", () =>
-  temporary("milo-stale-", async (folder) => {
-    const git = (root: string, ...args: string[]) =>
-      command(["git", ...args], { cwd: root });
-    const source = join(folder, "source");
-    const remote = join(folder, "remote.git");
-    await mkdir(source);
-    await git(source, "init", "-q", "-b", "main");
-    await git(source, "config", "user.name", "Test");
-    await git(source, "config", "user.email", "test@example.test");
-    await Bun.write(join(source, "file.txt"), "old\n");
-    await git(source, "add", ".");
-    await git(source, "commit", "-qm", "Initial");
-    const base = await git(source, "rev-parse", "HEAD");
-    await Bun.write(join(source, "file.txt"), "new\n");
-    await git(source, "commit", "-qam", "Change");
-    const sha = await git(source, "rev-parse", "HEAD");
-    await git(source, "clone", "-q", "--bare", source, remote);
-    await git(remote, "update-ref", "refs/heads/milo/issue-34", sha);
-    await git(remote, "update-ref", "refs/pull/34/head", sha);
-    const fakeAgent = join(folder, "agent.ts");
-    const runs = join(folder, "runs.txt");
-    await Bun.write(
-      fakeAgent,
-      `import { appendFileSync } from "node:fs";
+test.skipIf(nestedSandboxDenied)(
+  "review and revise publish nothing when the PR head moves",
+  () =>
+    temporary("milo-stale-", async (folder) => {
+      const git = (root: string, ...args: string[]) =>
+        command(["git", ...args], { cwd: root });
+      const source = join(folder, "source");
+      const remote = join(folder, "remote.git");
+      await mkdir(source);
+      await git(source, "init", "-q", "-b", "main");
+      await git(source, "config", "user.name", "Test");
+      await git(source, "config", "user.email", "test@example.test");
+      await Bun.write(join(source, "file.txt"), "old\n");
+      await git(source, "add", ".");
+      await git(source, "commit", "-qm", "Initial");
+      const base = await git(source, "rev-parse", "HEAD");
+      await Bun.write(join(source, "file.txt"), "new\n");
+      await git(source, "commit", "-qam", "Change");
+      const sha = await git(source, "rev-parse", "HEAD");
+      await git(source, "clone", "-q", "--bare", source, remote);
+      await git(remote, "update-ref", "refs/heads/milo/issue-34", sha);
+      await git(remote, "update-ref", "refs/pull/34/head", sha);
+      const fakeAgent = join(folder, "agent.ts");
+      const runs = join(folder, "runs.txt");
+      await Bun.write(
+        fakeAgent,
+        `import { appendFileSync } from "node:fs";
 const prompt = await Bun.stdin.text();
 appendFileSync(${JSON.stringify(runs)}, "x");
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "revised\\n");
 await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
   ? JSON.stringify({ verdict: "hold", reversibility: "two-way", blastRadius: "file.txt", body: "Report" })
   : "Report");`,
-    );
-    // Each read of the PR takes the next head; the last one repeats.
-    let heads: string[] = [];
-    const comments: string[] = [];
-    const gh: GitHubClient = {
-      async api<T>(endpoint: string): Promise<T> {
-        if (endpoint === "pulls/34")
-          return {
-            number: 34,
-            state: "open",
-            body: "",
-            html_url: "https://example.test/pr/34",
-            head: {
-              ref: "milo/issue-34",
-              sha: heads.length > 1 ? heads.shift() : heads[0],
-              repo: { full_name: "owner/repo" },
-            },
-            base: { ref: "main", sha: base },
-          } as T;
-        if (endpoint === "issues/34") return issue() as T;
-        if (endpoint === "collaborators/owner/permission")
-          return { permission: "admin" } as T;
-        throw new Error(`Unexpected endpoint: ${endpoint}`);
-      },
-      async pages<T>(endpoint: string): Promise<T[]> {
-        if (endpoint === "pulls/34/reviews")
-          return [
-            {
-              id: 1,
-              state: "CHANGES_REQUESTED",
-              commit_id: sha,
-              user: { login: "owner" },
-              body: "Fix",
-            },
-          ] as T[];
-        return [];
-      },
-      async comment(_number, body) {
-        comments.push(body);
-      },
-      async viewer() {
-        return "milo";
-      },
-    };
-    const runner = new Runner(
-      {
-        agent: { command: [process.execPath, fakeAgent, "{output}"] },
-        repos: [],
-      },
-      () => gh,
-      async (_repo, root) => {
-        await git(folder, "clone", "-q", remote, root);
-        await git(root, "config", "user.name", "Test");
-        await git(root, "config", "user.email", "test@example.test");
-      },
-    );
-    const repo: Repo = {
-      name: "owner/repo",
-      setup: [],
-      checks: [{ command: ["true"] }],
-    };
-    const moved = "0".repeat(40);
-    // A head that moved before checkout stops the run before the agent starts.
-    heads = [moved];
-    await expect(runner.review(repo, 34)).rejects.toThrow(
-      "PR changed during checkout",
-    );
-    expect(existsSync(runs)).toBeFalse();
-    // A head that moved while the agent ran stops the run before it publishes.
-    heads = [sha, moved];
-    await expect(runner.review(repo, 34)).rejects.toThrow(
-      "PR changed during review",
-    );
-    heads = [sha, moved];
-    await expect(runner.revise(repo, 34)).rejects.toThrow(
-      "PR changed during revision",
-    );
-    expect(await Bun.file(runs).text()).toBe("xx");
-    expect(comments).toEqual([]);
-    expect(await git(remote, "rev-parse", "refs/heads/milo/issue-34")).toBe(
-      sha,
-    );
-  }));
+      );
+      // Each read of the PR takes the next head; the last one repeats.
+      let heads: string[] = [];
+      const comments: string[] = [];
+      const gh: GitHubClient = {
+        async api<T>(endpoint: string): Promise<T> {
+          if (endpoint === "pulls/34")
+            return {
+              number: 34,
+              state: "open",
+              body: "",
+              html_url: "https://example.test/pr/34",
+              head: {
+                ref: "milo/issue-34",
+                sha: heads.length > 1 ? heads.shift() : heads[0],
+                repo: { full_name: "owner/repo" },
+              },
+              base: { ref: "main", sha: base },
+            } as T;
+          if (endpoint === "issues/34") return issue() as T;
+          if (endpoint === "collaborators/owner/permission")
+            return { permission: "admin" } as T;
+          throw new Error(`Unexpected endpoint: ${endpoint}`);
+        },
+        async pages<T>(endpoint: string): Promise<T[]> {
+          if (endpoint === "pulls/34/reviews")
+            return [
+              {
+                id: 1,
+                state: "CHANGES_REQUESTED",
+                commit_id: sha,
+                user: { login: "owner" },
+                body: "Fix",
+              },
+            ] as T[];
+          return [];
+        },
+        async comment(_number, body) {
+          comments.push(body);
+        },
+        async viewer() {
+          return "milo";
+        },
+      };
+      const runner = new Runner(
+        {
+          agent: { command: [process.execPath, fakeAgent, "{output}"] },
+          repos: [],
+        },
+        () => gh,
+        async (_repo, root) => {
+          await git(folder, "clone", "-q", remote, root);
+          await git(root, "config", "user.name", "Test");
+          await git(root, "config", "user.email", "test@example.test");
+        },
+      );
+      const repo: Repo = {
+        name: "owner/repo",
+        setup: [],
+        checks: [{ command: ["true"] }],
+      };
+      const moved = "0".repeat(40);
+      // A head that moved before checkout stops the run before the agent starts.
+      heads = [moved];
+      await expect(runner.review(repo, 34)).rejects.toThrow(
+        "PR changed during checkout",
+      );
+      expect(existsSync(runs)).toBeFalse();
+      // A head that moved while the agent ran stops the run before it publishes.
+      heads = [sha, moved];
+      await expect(runner.review(repo, 34)).rejects.toThrow(
+        "PR changed during review",
+      );
+      heads = [sha, moved];
+      await expect(runner.revise(repo, 34)).rejects.toThrow(
+        "PR changed during revision",
+      );
+      expect(await Bun.file(runs).text()).toBe("xx");
+      expect(comments).toEqual([]);
+      expect(await git(remote, "rev-parse", "refs/heads/milo/issue-34")).toBe(
+        sha,
+      );
+    }),
+);
 
 // Policy lives in mergeDecision (tests/merge.test.ts); this checks Runner's wiring.
 test("auto-merge gates on the ticket, then merges, updates or logs without stopping later PRs", async () => {
@@ -1430,60 +1448,63 @@ test("null users and commits on GitHub entries do not stop reviews", async () =>
   }
 });
 
-test("Milo pushes nothing after untrusted code changes git config", () =>
-  temporary("milo-gitconfig-", async (folder) => {
-    const git = (root: string, ...args: string[]) =>
-      command(["git", ...args], { cwd: root });
-    const source = join(folder, "source");
-    const remote = join(folder, "remote.git");
-    await mkdir(source);
-    await git(source, "init", "-q", "-b", "main");
-    await git(source, "config", "user.name", "Test");
-    await git(source, "config", "user.email", "test@example.test");
-    await Bun.write(join(source, "file.txt"), "old\n");
-    await git(source, "add", ".");
-    await git(source, "commit", "-qm", "Initial");
-    await git(source, "clone", "-q", "--bare", source, remote);
-    // The agent is the untrusted code here: setup and check steps cannot write .git at all.
-    const fakeAgent = join(folder, "agent.ts");
-    await Bun.write(
-      fakeAgent,
-      `import { appendFileSync } from "node:fs";
+test.skipIf(nestedSandboxDenied)(
+  "Milo pushes nothing after untrusted code changes git config",
+  () =>
+    temporary("milo-gitconfig-", async (folder) => {
+      const git = (root: string, ...args: string[]) =>
+        command(["git", ...args], { cwd: root });
+      const source = join(folder, "source");
+      const remote = join(folder, "remote.git");
+      await mkdir(source);
+      await git(source, "init", "-q", "-b", "main");
+      await git(source, "config", "user.name", "Test");
+      await git(source, "config", "user.email", "test@example.test");
+      await Bun.write(join(source, "file.txt"), "old\n");
+      await git(source, "add", ".");
+      await git(source, "commit", "-qm", "Initial");
+      await git(source, "clone", "-q", "--bare", source, remote);
+      // The agent is the untrusted code here: setup and check steps cannot write .git at all.
+      const fakeAgent = join(folder, "agent.ts");
+      await Bun.write(
+        fakeAgent,
+        `import { appendFileSync } from "node:fs";
 await Bun.stdin.text();
 await Bun.write("file.txt", "new");
 appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
 await Bun.write(Bun.argv[2]!, "Report");`,
-    );
-    const gh: GitHubClient = {
-      async api<T>(endpoint: string): Promise<T> {
-        if (endpoint === "issues/12") return issue() as T;
-        throw new Error(`Unexpected endpoint: ${endpoint}`);
-      },
-      async pages<T>(): Promise<T[]> {
-        return [];
-      },
-      async comment() {},
-      async viewer() {
-        return "milo";
-      },
-    };
-    const runner = new Runner(
-      {
-        agent: { command: [process.execPath, fakeAgent, "{output}"] },
-        repos: [],
-      },
-      () => gh,
-      async (_repo, root) => {
-        await git(folder, "clone", "-q", remote, root);
-        await git(root, "config", "user.name", "Test");
-        await git(root, "config", "user.email", "test@example.test");
-      },
-    );
-    await expect(
-      runner.work(
-        { name: "owner/repo", setup: [], checks: [{ command: ["true"] }] },
-        12,
-      ),
-    ).rejects.toThrow(/git config: .*tampered/);
-    expect(await git(remote, "branch", "--list", "milo/issue-12")).toBe("");
-  }));
+      );
+      const gh: GitHubClient = {
+        async api<T>(endpoint: string): Promise<T> {
+          if (endpoint === "issues/12") return issue() as T;
+          throw new Error(`Unexpected endpoint: ${endpoint}`);
+        },
+        async pages<T>(): Promise<T[]> {
+          return [];
+        },
+        async comment() {},
+        async viewer() {
+          return "milo";
+        },
+      };
+      const runner = new Runner(
+        {
+          agent: { command: [process.execPath, fakeAgent, "{output}"] },
+          repos: [],
+        },
+        () => gh,
+        async (_repo, root) => {
+          await git(folder, "clone", "-q", remote, root);
+          await git(root, "config", "user.name", "Test");
+          await git(root, "config", "user.email", "test@example.test");
+        },
+      );
+      await expect(
+        runner.work(
+          { name: "owner/repo", setup: [], checks: [{ command: ["true"] }] },
+          12,
+        ),
+      ).rejects.toThrow(/git config: .*tampered/);
+      expect(await git(remote, "branch", "--list", "milo/issue-12")).toBe("");
+    }),
+);

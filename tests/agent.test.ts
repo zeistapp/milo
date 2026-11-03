@@ -69,6 +69,12 @@ test("Claude reviews get a sandboxed shell but no writes; edits require a shell 
     "exact-model",
   ]);
   expect(readonly).not.toContain("--effort");
+  expect(readonly).toContain("--bare");
+  const subscription = claudeCommand("/repo", "/scratch", true, {
+    subscription: true,
+  });
+  expect(subscription).not.toContain("--bare");
+  expect(subscription[subscription.indexOf("--setting-sources") + 1]).toBe("");
   expect(editing[editing.indexOf("--allowedTools") + 1]).toContain("Bash");
   expect(readonly[readonly.indexOf("--allowedTools") + 1]).not.toContain(
     "Edit",

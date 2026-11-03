@@ -264,7 +264,10 @@ export class Runner {
           (error) => {
             active.delete(key);
             done.add(key);
-            failures.push(`${key}: ${reason(error)}`);
+            const failure = `${key}: ${reason(error)}`;
+            // Logged now as well as in the summary, so a watcher sees it while the run goes on.
+            console.log(`Failed ${failure}`);
+            failures.push(failure);
           },
         )
         .finally(() => {

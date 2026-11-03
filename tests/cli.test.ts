@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { main } from "../src/cli.ts";
 import { temporary } from "../src/process.ts";
 import { Runner } from "../src/runner.ts";
+import { nestedSandboxDenied } from "./helpers.ts";
 
 const actions = [
   "plan",
@@ -209,49 +210,52 @@ test("one failing repository does not stop the rest and is annotated in Actions"
   ]);
 });
 
-test("check runs the configured repo's checks and fails when they fail", () =>
-  temporary("milo-cli-check-", async (root) => {
-    const file = join(root, "check.json");
-    const write = (code: number) =>
-      Bun.write(
-        file,
-        JSON.stringify({
-          agent: { provider: "claude" },
-          repos: [
-            {
-              name: "owner/a",
-              setup: [],
-              checks: [
-                {
-                  command: [
-                    process.execPath,
-                    "-e",
-                    `process.exit(require("fs").existsSync("marker") ? ${code} : 2)`,
-                  ],
-                },
-              ],
-            },
-          ],
-        }),
-      );
-    const check = () =>
-      main([
-        "--config",
-        file,
-        "--repo",
-        "owner/a",
-        "--report-dir",
-        join(root, "report"),
-        "check",
-        root,
-      ]);
-    // Each check exits 2 unless it runs inside the target directory.
-    await Bun.write(join(root, "marker"), "");
-    await write(0);
-    await check();
-    await write(1);
-    await expect(check()).rejects.toThrow("Local checks failed");
-  }));
+test.skipIf(nestedSandboxDenied)(
+  "check runs the configured repo's checks and fails when they fail",
+  () =>
+    temporary("milo-cli-check-", async (root) => {
+      const file = join(root, "check.json");
+      const write = (code: number) =>
+        Bun.write(
+          file,
+          JSON.stringify({
+            agent: { provider: "claude" },
+            repos: [
+              {
+                name: "owner/a",
+                setup: [],
+                checks: [
+                  {
+                    command: [
+                      process.execPath,
+                      "-e",
+                      `process.exit(require("fs").existsSync("marker") ? ${code} : 2)`,
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
+        );
+      const check = () =>
+        main([
+          "--config",
+          file,
+          "--repo",
+          "owner/a",
+          "--report-dir",
+          join(root, "report"),
+          "check",
+          root,
+        ]);
+      // Each check exits 2 unless it runs inside the target directory.
+      await Bun.write(join(root, "marker"), "");
+      await write(0);
+      await check();
+      await write(1);
+      await expect(check()).rejects.toThrow("Local checks failed");
+    }),
+);
 
 test("packages prints every configured repo's system packages once", () =>
   temporary("milo-cli-packages-", async (root) => {
