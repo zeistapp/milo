@@ -71,13 +71,15 @@ runs:
     # .NET, Android, GHC and CodeQL hold about 25 GB that no JavaScript check uses. The runner also pipes core
     # dumps to systemd-coredump with no size limit; a plain core file obeys the process's own limit instead.
     # Hosted runners only: a self-hosted machine keeps its toolchains and kernel settings.
+    # The delete takes about 40 s, so it runs in the background while the job installs and clones; most jobs never
+    # set up a repo and shouldn't wait for it. The runner ends it with the job. Its output goes to /dev/null so an
+    # open pipe can't hold this step.
     - name: Free runner disk
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
       run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo sysctl -w kernel.core_pattern=core
-        df -h /
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL > /dev/null 2>&1 &
     # Setup and check steps run under bubblewrap; the Claude adapter's shell sandbox also needs socat.
     - name: Install sandbox
       if: runner.os == 'Linux'
