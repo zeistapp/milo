@@ -26,6 +26,16 @@ import {
   validateIssue,
   validatePR,
 } from "./rules.ts";
+import {
+  type Event,
+  initial,
+  isActive,
+  nextJob,
+  prBusy,
+  prKey,
+  schedule,
+  ticketKey,
+} from "./schedule.ts";
 import { existingPr, work } from "./work.ts";
 import { type Clone, clone } from "./workspace.ts";
 
@@ -198,46 +208,35 @@ export class Runner {
       scanModels = ["claude-fable-5-1", "claude-sonnet-5-5"],
     } = {},
   ): Promise<string[]> {
-    // A spending stop for a job that keeps coming back: a PR takes about five review rounds at most.
-    const maxRuns = 10;
-    type Job = [key: string, run: () => Promise<boolean | undefined>];
-    const failures: string[] = [];
+    type Run = () => Promise<boolean>;
+    const jobs = new Map<string, Run>();
+    let state = initial;
+    const dispatch = (event: Event) => {
+      state = schedule(state, event);
+    };
     const reason = (error: unknown) =>
       error instanceof Error ? error.message : "Unknown failure";
-    // Tickets and PR steps go before scans, so reviews never wait behind a scan.
-    const ready: Job[] = [];
-    const scans: Job[] = [];
-    const active = new Set<string>(); // queued or running
-    const done = new Set<string>(); // failed or out of runs: not retried this run
-    const runs = new Map<string, number>();
-    const add = (queue: Job[], key: string, run: Job[1]) => {
-      if (active.has(key) || done.has(key)) return;
-      if ((runs.get(key) ?? 0) >= maxRuns) {
-        done.add(key);
-        failures.push(`${key}: stopped after ${maxRuns} runs`);
-        return;
-      }
-      active.add(key);
-      queue.push([key, run]);
+    // Keeps the first run for a key, as the schedule ignores a key it already holds.
+    const found = (key: string, kind: "ready" | "scan", run: Run) => {
+      if (!isActive(state, key)) jobs.set(key, run);
+      dispatch({ type: "found", key, kind });
     };
     const discover = async () => {
       for await (const number of this.readyTickets(repo))
-        add(ready, `#${number}`, () =>
+        found(ticketKey(number), "ready", () =>
           this.work(repo, number).then(() => false),
         );
-      // A PR whose ticket is still being worked is not finished yet.
       const busy = (pr: PullRequest) =>
-        active.has(`PR#${pr.number}`) ||
-        active.has(`#${ticketNumber(pr.head.ref)}`);
+        prBusy(state, pr.number, ticketNumber(pr.head.ref));
       for await (const [number, job] of this.reviewJobs(repo, busy))
-        add(ready, `PR#${number}`, () => job().then(() => false));
+        found(prKey(number), "ready", () => job().then(() => false));
     };
     // Shared labels first: concurrent category scans would race to create them.
     await this.plan({ ...repo, categories: [] }, true);
     await discover();
     // A scan that filed something may find more; one that found nothing is done this run.
     for (const category of repo.categories ?? categoryNames)
-      add(scans, `${category} scan`, async () => {
+      found(`${category} scan`, "scan", async () => {
         const filed = await this.plan(
           { ...repo, categories: [category] },
           true,
@@ -249,25 +248,20 @@ export class Runner {
     const running = new Set<Promise<void>>();
     // Set when a job finishes, including during a look, so no job's changes go unseen.
     let changed = false;
-    // Set when a look fails: start nothing new, but let running agents finish and report.
-    let stopping = false;
-    const start = ([key, run]: Job) => {
-      runs.set(key, (runs.get(key) ?? 0) + 1);
+    const start = (key: string, run: Run) => {
+      dispatch({ type: "started", key });
       console.log(`Started ${key}`);
       const task: Promise<void> = run()
         .then(
           (again) => {
             console.log(`Finished ${key}`);
-            active.delete(key);
-            if (again) add(scans, key, run);
+            dispatch({ type: "finished", key, again });
           },
           (error) => {
-            active.delete(key);
-            done.add(key);
-            const failure = `${key}: ${reason(error)}`;
+            const why = reason(error);
+            dispatch({ type: "failed", key, reason: why });
             // Logged now as well as in the summary, so a watcher sees it while the run goes on.
-            console.log(`Failed ${failure}`);
-            failures.push(failure);
+            console.log(`Failed ${key}: ${why}`);
           },
         )
         .finally(() => {
@@ -277,25 +271,31 @@ export class Runner {
       running.add(task);
     };
     for (;;) {
-      while (!stopping && running.size < agents) {
-        const job = ready.shift() ?? scans.shift();
-        if (!job) break;
-        start(job);
+      for (
+        let key = nextJob(state, agents, running.size);
+        key;
+        key = nextJob(state, agents, running.size)
+      ) {
+        const run = jobs.get(key);
+        if (!run) throw new Error(`No job for ${key}`);
+        start(key, run);
       }
       if (!running.size) break;
       await Promise.race(running);
       // Looks run one at a time, so two never merge the same PR.
-      while (changed && !stopping) {
+      while (changed && !state.stopping) {
         changed = false;
         try {
           await discover();
         } catch (error) {
-          stopping = true;
-          failures.push(`look at ${repo.name}: ${reason(error)}`);
+          dispatch({
+            type: "lookFailed",
+            failure: `look at ${repo.name}: ${reason(error)}`,
+          });
         }
       }
     }
-    return failures;
+    return [...state.failures];
   }
   async tick(repo: Repo): Promise<void> {
     await this.runTasks(repo);

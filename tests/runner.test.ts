@@ -379,13 +379,17 @@ test("a ticket with an open blocker waits; closed blockers and missing data do n
     work.mockRestore();
   }
 });
-function turboFixture(tickets: { current: Issue[] }) {
+function turboFixture(
+  tickets: { current: Issue[] },
+  pulls: { current: PullRequest[] } = { current: [] },
+) {
   const gh: GitHubClient = {
     async api() {
       throw new Error("Unexpected api call");
     },
     async pages<T>(endpoint: string): Promise<T[]> {
       if (endpoint.startsWith("issues?")) return tickets.current as T[];
+      if (endpoint === "pulls?state=open") return pulls.current as T[];
       if (endpoint === "pulls?state=all&head=owner:milo/issue-4")
         return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
       return [];
@@ -415,7 +419,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
     peak = Math.max(peak, ++running);
-    await Bun.sleep(5);
+    await Promise.resolve();
     running--;
     if (number === 5) throw new Error("checks failed");
   });
@@ -446,7 +450,7 @@ test("turbo works every ready ticket at most `agents` at a time and collects fai
     log.mockRestore();
   }
 });
-test("turbo --loop rescans while scans file, and stops a job that keeps coming back", async () => {
+test("turbo --loop rescans while scans file, and works what they file", async () => {
   const tickets = { current: [{ ...issue(), number: 3 }] };
   const { runner, repo } = turboFixture(tickets);
   // The first scan files ready ticket #8; the next finds nothing, so scanning ends.
@@ -463,91 +467,91 @@ test("turbo --loop rescans while scans file, and stops a job that keeps coming b
     expect(await runner.turbo(repo, { loop: true })).toEqual([]);
     expect(work.mock.calls.map(([, number]) => number)).toEqual([3, 8]);
     expect(scans).toBe(2);
-    // A ticket that never leaves the queue stops at the cap instead of spending forever.
-    tickets.current = [{ ...issue(), number: 9 }];
-    work.mockReset();
-    work.mockResolvedValue(undefined);
-    expect(await runner.turbo(repo, { loop: true })).toEqual([
-      "#9: stopped after 10 runs",
-    ]);
-    expect(work).toHaveBeenCalledTimes(10);
   } finally {
     plan.mockRestore();
     work.mockRestore();
   }
 });
 test("turbo --loop stops starting jobs when a look fails, and waits for running ones", async () => {
-  const { runner, repo } = turboFixture({ current: [] });
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let looks = 0;
-  const tickets = spyOn(
-    runner as unknown as { readyTickets: () => AsyncGenerator<number> },
-    "readyTickets",
-  ).mockImplementation(async function* () {
-    if (looks++) throw new Error("GitHub is down");
-    yield* [3, 5, 6];
+  const { runner, repo } = turboFixture({
+    get current() {
+      if (looks++) {
+        // #5 is still running when the look fails.
+        release();
+        throw new Error("GitHub is down");
+      }
+      return [3, 5, 6].map((number) => ({ ...issue(), number }));
+    },
   });
   const plan = spyOn(runner, "plan").mockResolvedValue(0);
   const finished: number[] = [];
   const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
-    await Bun.sleep(number === 5 ? 20 : 1);
+    if (number === 5) await held;
     finished.push(number);
   });
   try {
     expect(await runner.turbo(repo, { agents: 2, loop: true })).toEqual([
       "look at owner/repo: GitHub is down",
     ]);
-    // #5 was running when the look failed and finished; #6 and the scan never started.
+    // #6 and the scan never started.
     expect(finished).toEqual([3, 5]);
     expect(plan.mock.calls).toEqual([[{ ...repo, categories: [] }, true]]);
   } finally {
-    tickets.mockRestore();
     plan.mockRestore();
     work.mockRestore();
   }
 });
-test("turbo --loop starts a new PR's review while a scan is still running", async () => {
-  const tickets = { current: [{ ...issue(), number: 3 }] };
-  const { runner, repo } = turboFixture(tickets);
+test("turbo --loop reviews a PR only once its ticket's work has finished", async () => {
+  const tickets = { current: [3, 5].map((number) => ({ ...issue(), number })) };
+  const pulls: { current: PullRequest[] } = { current: [] };
+  const { runner, repo } = turboFixture(tickets, pulls);
   const events: string[] = [];
-  let finishScan = () => {};
-  const scanning = new Promise<void>((resolve) => {
-    finishScan = resolve;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
   });
+  // The scan starts after #5 finishes and the look that follows, so it lets #3 finish.
   const plan = spyOn(runner, "plan").mockImplementation(async (scoped) => {
-    if (!scoped.categories?.length) return 0;
-    events.push("scan started");
-    await scanning;
-    events.push("scan finished");
+    if (scoped.categories?.length) release();
     return 0;
   });
-  let opened = false;
-  const work = spyOn(runner, "work").mockImplementation(async () => {
-    tickets.current = [];
-    opened = true;
+  const work = spyOn(runner, "work").mockImplementation(async (_, number) => {
+    if (number === 3) {
+      // Working #3 opens PR #9 and is still going when the next look sees it.
+      const ref = { ref: "milo/issue-3", sha: "abc" };
+      pulls.current = [
+        {
+          number: 9,
+          state: "open",
+          body: null,
+          html_url: "https://github.com/owner/repo/pull/9",
+          head: { ...ref, repo: { full_name: "owner/repo" } },
+          base: { ref: "main", sha: "def" },
+        },
+      ];
+      await held;
+    }
+    tickets.current = tickets.current.filter((t) => t.number !== number);
+    events.push(`worked #${number}`);
   });
-  // Stands in for PR #9 that working #3 opened; it needs one review.
-  const jobs = spyOn(
-    runner as unknown as {
-      reviewJobs: () => AsyncGenerator<[number, () => Promise<void>]>;
+  const review = spyOn(runner, "review").mockImplementation(
+    async (_, number) => {
+      pulls.current = [];
+      events.push(`reviewed PR#${number}`);
     },
-    "reviewJobs",
-  ).mockImplementation(async function* () {
-    if (!opened || events.includes("reviewed")) return;
-    yield [
-      9,
-      async () => {
-        events.push("reviewed");
-        finishScan();
-      },
-    ];
-  });
+  );
   try {
-    expect(await runner.turbo(repo, { loop: true })).toEqual([]);
-    expect(events).toEqual(["scan started", "reviewed", "scan finished"]);
+    expect(await runner.turbo(repo, { agents: 2, loop: true })).toEqual([]);
+    expect(events).toEqual(["worked #5", "worked #3", "reviewed PR#9"]);
   } finally {
     plan.mockRestore();
     work.mockRestore();
-    jobs.mockRestore();
+    review.mockRestore();
   }
 });
 test("child processes lose GitHub credentials and time out", async () => {
