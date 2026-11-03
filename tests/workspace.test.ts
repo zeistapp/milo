@@ -4,6 +4,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { command, temporary } from "../src/process.ts";
 import { openWorkspace } from "../src/workspace.ts";
+import { withEnv } from "./helpers.ts";
 
 const repo = { name: "owner/repo" };
 const open = (root: string) =>
@@ -111,21 +112,12 @@ test("a global git config cannot run programs from Milo's git", () =>
       join(home, ".gitconfig"),
       `[core]\n\tfsmonitor = ${hook}\n`,
     );
-    const previous = {
-      HOME: process.env.HOME,
-      XDG: process.env.XDG_CONFIG_HOME,
-    };
-    try {
-      process.env.HOME = home;
-      process.env.XDG_CONFIG_HOME = join(home, ".config");
+    const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config") };
+    await withEnv(env, async () => {
       expect(await changes()).toBeTrue();
       expect(existsSync(marker)).toBeFalse();
       // Plain git in the same environment does run it, so the check above is meaningful.
       await command(["git", "status"], { cwd: root });
       expect(existsSync(marker)).toBeTrue();
-    } finally {
-      process.env.HOME = previous.HOME;
-      if (previous.XDG === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = previous.XDG;
-    }
+    });
   }));

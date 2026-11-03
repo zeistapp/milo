@@ -25,19 +25,8 @@ import {
   validateIssue,
   validatePR,
 } from "../src/rules.ts";
+import { issue } from "./helpers.ts";
 
-function issue(body = "", state = "open"): Issue {
-  return {
-    number: 12,
-    title: "Maintenance",
-    body,
-    state,
-    html_url: "https://example.test/issue/12",
-    created_at: "2026-10-15T09:00:00Z",
-    labels: [{ name: "milo:task" }, { name: "milo:ready" }],
-    user: { login: "milo" },
-  };
-}
 test("retired categories map to their replacements in tickets and config", () => {
   const labelled = (...names: string[]): Issue => ({
     ...issue(),

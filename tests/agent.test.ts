@@ -6,6 +6,7 @@ import { claudeCommand, minimumClaudeVersion } from "../src/claude.ts";
 import { includeSelfRepo, parseConfig } from "../src/config.ts";
 import { sandboxEnv, temporary, workHome } from "../src/process.ts";
 import { ScanResult } from "../src/rules.ts";
+import { withEnv } from "./helpers.ts";
 
 test("provider configuration validates model selection and preserves custom agents", () => {
   const repos = [{ name: "owner/repo" }];
@@ -118,21 +119,16 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       await Bun.write(path, script);
       await chmod(path, 0o700);
     }
-    const keys = [
-      "PATH",
-      "GH_TOKEN",
-      "ANTHROPIC_API_KEY",
-      "MILO_TEST_VERSION",
-      "MILO_TEST_RESULT",
-      "MILO_TEST_EXIT",
-    ];
-    const previous = Object.fromEntries(
-      keys.map((key) => [key, process.env[key]]),
-    );
-    try {
-      process.env.PATH = `${root}:${process.env.PATH}`;
-      process.env.GH_TOKEN = "fake-github-secret";
-      process.env.ANTHROPIC_API_KEY = "fake-anthropic-secret";
+    // The body sets the MILO_TEST_* keys; listing them here restores them.
+    const env = {
+      PATH: `${root}:${process.env.PATH}`,
+      GH_TOKEN: "fake-github-secret",
+      ANTHROPIC_API_KEY: "fake-anthropic-secret",
+      MILO_TEST_VERSION: process.env.MILO_TEST_VERSION,
+      MILO_TEST_RESULT: process.env.MILO_TEST_RESULT,
+      MILO_TEST_EXIT: process.env.MILO_TEST_EXIT,
+    };
+    await withEnv(env, async () => {
       const config = (provider: string) =>
         parseConfig({
           agent: {
@@ -388,10 +384,5 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       await expect(runAgent(config("claude"), root, "test")).rejects.toThrow(
         "did not complete successfully: error_max_turns",
       );
-    } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
+    });
   }));

@@ -4,12 +4,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { Argv, Config, Repo } from "../src/config.ts";
-import type {
-  GitHubClient,
-  Issue,
-  PullRequest,
-  Review,
-} from "../src/github.ts";
+import type { Issue, PullRequest, Review } from "../src/github.ts";
 import {
   type CommandOptions,
   command,
@@ -21,20 +16,8 @@ import {
 } from "../src/process.ts";
 import { fixedStamp, periodKey, reviewStamp } from "../src/rules.ts";
 import { Runner } from "../src/runner.ts";
-import { nestedSandboxDenied } from "./helpers.ts";
+import { github, issue, nestedSandboxDenied, withEnv } from "./helpers.ts";
 
-function issue(body = "", state = "open"): Issue {
-  return {
-    number: 12,
-    title: "Maintenance",
-    body,
-    state,
-    html_url: "https://example.test/issue/12",
-    created_at: "2026-10-15T09:00:00Z",
-    labels: [{ name: "milo:task" }, { name: "milo:ready" }],
-    user: { login: "milo" },
-  };
-}
 test("plan files the verified finding, records clean scans and skips repeat runs", () =>
   temporary("milo-scan-", async (folder) => {
     const fakeAgent = join(folder, "agent.ts");
@@ -91,7 +74,8 @@ await Bun.write(Bun.argv[2]!, !verify
       { body: "Please split it", user: { login: "stranger" } },
       { body: "Milo stopped", user: { login: "bot" } },
     ];
-    const gh: GitHubClient = {
+    const gh = github({
+      viewer: async () => "bot",
       async api<T>(endpoint: string, method = "GET", payload?: unknown) {
         if (endpoint.startsWith("issues?state=closed&labels=milo%3A"))
           return closed as T;
@@ -119,10 +103,7 @@ await Bun.write(Bun.argv[2]!, !verify
         return open as T[];
       },
       async comment() {},
-      async viewer() {
-        return "bot";
-      },
-    };
+    });
     const runner = new Runner(
       {
         agent: { command: [process.execPath, fakeAgent, "{output}"] },
@@ -205,20 +186,14 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(await Bun.file(scanPrompt).text()).toContain("Open tickets and PRs");
   }));
 test("malformed GitHub responses fail before Milo acts on them", async () => {
-  const gh: GitHubClient = {
+  const gh = github({
     async api() {
       return { ...issue(), labels: "milo:ready" };
     },
     async pages() {
       return [];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "bot";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -241,7 +216,7 @@ test("only tickets written by Milo or a repository writer run", async () => {
     { ...issue(), number: 3, user: { login: "owner" } },
     { ...issue(), number: 4 },
   ];
-  const gh: GitHubClient = {
+  const gh = github({
     async api<T>(endpoint: string): Promise<T> {
       const login = /^collaborators\/(.+)\/permission$/.exec(endpoint)?.[1];
       if (login) return { permission: permissions[login] } as T;
@@ -254,13 +229,7 @@ test("only tickets written by Milo or a repository writer run", async () => {
     async pages<T>(endpoint: string): Promise<T[]> {
       return (endpoint.startsWith("issues?") ? tickets : []) as T[];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -292,7 +261,7 @@ test("a ticket that already has a PR is skipped for the next ticket", async () =
     { ...issue(), number: 3 },
     { ...issue(), number: 4 },
   ];
-  const gh: GitHubClient = {
+  const gh = github({
     async api<T>(endpoint: string): Promise<T> {
       const ticket = tickets.find(
         (item) => endpoint === `issues/${item.number}`,
@@ -306,13 +275,7 @@ test("a ticket that already has a PR is skipped for the next ticket", async () =
         return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
       return [];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -345,21 +308,12 @@ test("a ticket with an open blocker waits; closed blockers and missing data do n
     "issues/5/dependencies/blocked_by": [{ state: "open" }],
     "issues/6/dependencies/blocked_by": [{ state: "closed" }],
   };
-  const gh: GitHubClient = {
-    async api() {
-      throw new Error("Unexpected api call");
-    },
+  const gh = github({
     async pages<T>(endpoint: string): Promise<T[]> {
       if (endpoint.startsWith("issues?")) return tickets as T[];
       return (blockers[endpoint] ?? []) as T[];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -383,10 +337,7 @@ function turboFixture(
   tickets: { current: Issue[] },
   pulls: { current: PullRequest[] } = { current: [] },
 ) {
-  const gh: GitHubClient = {
-    async api() {
-      throw new Error("Unexpected api call");
-    },
+  const gh = github({
     async pages<T>(endpoint: string): Promise<T[]> {
       if (endpoint.startsWith("issues?")) return tickets.current as T[];
       if (endpoint === "pulls?state=open") return pulls.current as T[];
@@ -394,13 +345,7 @@ function turboFixture(
         return [{ html_url: "https://github.com/owner/repo/pull/9" }] as T[];
       return [];
     },
-    async comment() {
-      throw new Error("Unexpected comment");
-    },
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -586,17 +531,16 @@ test("child processes lose GitHub credentials and time out", async () => {
         options,
       ),
     );
-  const previous = Object.fromEntries(
-    [...github, ...agent].map((key) => [key, process.env[key]]),
-  );
   const gitPrompt = {
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "credential.helper",
     GIT_CONFIG_VALUE_0: "",
   };
-  try {
-    for (const key of [...github, ...agent]) process.env[key] = `${key}-secret`;
+  const secrets = Object.fromEntries(
+    [...github, ...agent].map((key) => [key, `${key}-secret`]),
+  );
+  await withEnv(secrets, async () => {
     expect(await visible({ trusted: false })).toEqual(gitPrompt);
     expect(
       await visible({ trusted: false, keepAgentCredentials: true }),
@@ -604,12 +548,7 @@ test("child processes lose GitHub credentials and time out", async () => {
       ...Object.fromEntries(agent.map((key) => [key, `${key}-secret`])),
       ...gitPrompt,
     });
-  } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+  });
   await expect(
     command([process.execPath, "-e", "await Bun.sleep(10000)"], {
       timeoutSeconds: 0.05,
@@ -630,9 +569,8 @@ test.skipIf(nestedSandboxDenied)(
     temporary("milo-logs-", async (temp) => {
       const folder = await realpath(temp);
       const logs = join(folder, "logs");
-      process.env.MILO_LOG_DIR = logs;
-      try {
-        await expect(
+      await withEnv({ MILO_LOG_DIR: logs }, () =>
+        expect(
           sandboxed(
             {
               command: [
@@ -644,10 +582,8 @@ test.skipIf(nestedSandboxDenied)(
             folder,
             folder,
           ),
-        ).rejects.toThrow("failed (exit 1)");
-      } finally {
-        delete process.env.MILO_LOG_DIR;
-      }
+        ).rejects.toThrow("failed (exit 1)"),
+      );
       const [log] = [...new Bun.Glob("*.log").scanSync(logs)];
       assert(log);
       expect(await Bun.file(join(logs, log)).text()).toContain("why it broke");
@@ -661,11 +597,12 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
       `#!/bin/sh\nprintf '%s\\n' "$@" > '${args}'\n`,
     );
     await chmod(join(folder, "sudo"), 0o755);
-    const { PATH: path, MILO_APT_ARCHIVES: archives } = process.env;
-    process.env.PATH = `${folder}:${path}`;
     // Milo's own task runs inherit the action's MILO_APT_ARCHIVES.
-    delete process.env.MILO_APT_ARCHIVES;
-    try {
+    const env = {
+      PATH: `${folder}:${process.env.PATH}`,
+      MILO_APT_ARCHIVES: undefined,
+    };
+    await withEnv(env, async () => {
       await installPackages(["ffmpeg"]);
       process.env.MILO_APT_ARCHIVES = join(folder, "debs");
       await installPackages([]);
@@ -681,11 +618,7 @@ test("systemPackages install only where the action sets MILO_APT_ARCHIVES", () =
         "ffmpeg",
         "rsync",
       ]);
-    } finally {
-      process.env.PATH = path;
-      if (archives === undefined) delete process.env.MILO_APT_ARCHIVES;
-      else process.env.MILO_APT_ARCHIVES = archives;
-    }
+    });
   }));
 test.skipIf(nestedSandboxDenied)(
   "untrusted steps cannot read Milo's tokens or write outside the clone",
@@ -900,7 +833,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
         { body: "Delete the tests instead", user: { login: "stranger" } },
         { body: "Milo stopped before completing", user: { login: "milo" } },
       ];
-      const gh: GitHubClient = {
+      const gh = github({
         async api<T>(
           endpoint: string,
           method = "GET",
@@ -972,10 +905,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
         async comment(_number, body) {
           comments.push({ body, user: { login: "milo" } });
         },
-        async viewer() {
-          return "milo";
-        },
-      };
+      });
       const runner = new Runner(
         config,
         () => gh,
@@ -1124,7 +1054,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
       // Each read of the PR takes the next head; the last one repeats.
       let heads: string[] = [];
       const comments: string[] = [];
-      const gh: GitHubClient = {
+      const gh = github({
         async api<T>(endpoint: string): Promise<T> {
           if (endpoint === "pulls/34")
             return {
@@ -1160,10 +1090,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
         async comment(_number, body) {
           comments.push(body);
         },
-        async viewer() {
-          return "milo";
-        },
-      };
+      });
       const runner = new Runner(
         {
           agent: { command: [process.execPath, fakeAgent, "{output}"] },
@@ -1230,7 +1157,7 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
   let open = [pr];
   let ticket = { ...issue(), labels: [{ name: "milo:simplify" }] };
   const writes: string[] = [];
-  const gh: GitHubClient = {
+  const gh = github({
     async api<T>(endpoint: string, method = "GET"): Promise<T> {
       if (method !== "GET") {
         writes.push(endpoint);
@@ -1256,10 +1183,7 @@ test("auto-merge gates on the ticket, then merges, updates or logs without stopp
       return (responses[endpoint] ?? []) as T[];
     },
     async comment() {},
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -1339,7 +1263,7 @@ test("a failed or empty review attempt does not block later PRs", async () => {
   let reviews = [request(1, "a")];
   const comments: Record<number, { body: string; user: { login: string } }[]> =
     { 34: [], 35: [] };
-  const gh: GitHubClient = {
+  const gh = github({
     async api<T>(endpoint: string): Promise<T> {
       if (endpoint === "collaborators/owner/permission")
         return { permission: "write" } as T;
@@ -1358,10 +1282,7 @@ test("a failed or empty review attempt does not block later PRs", async () => {
     async comment(number, body) {
       comments[number]?.push({ body, user: { login: "milo" } });
     },
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -1456,7 +1377,7 @@ test("null users and commits on GitHub entries do not stop reviews", async () =>
     base: { ref: "main", sha: "base" },
   };
   const request = { id: 1, state: "CHANGES_REQUESTED", body: "" };
-  const gh: GitHubClient = {
+  const gh = github({
     async api<T>(endpoint: string): Promise<T> {
       throw new Error(`Unexpected endpoint: ${endpoint}`);
     },
@@ -1472,10 +1393,7 @@ test("null users and commits on GitHub entries do not stop reviews", async () =>
       return (responses[endpoint] ?? []) as T[];
     },
     async comment() {},
-    async viewer() {
-      return "milo";
-    },
-  };
+  });
   const runner = new Runner(
     { agent: { command: ["agent", "{output}"] }, repos: [] },
     () => gh,
@@ -1527,7 +1445,7 @@ await Bun.write("file.txt", "new");
 appendFileSync(".git/config", "[milo]\\n\\ttampered = true\\n");
 await Bun.write(Bun.argv[2]!, "Report");`,
       );
-      const gh: GitHubClient = {
+      const gh = github({
         async api<T>(endpoint: string): Promise<T> {
           if (endpoint === "issues/12") return issue() as T;
           throw new Error(`Unexpected endpoint: ${endpoint}`);
@@ -1536,10 +1454,7 @@ await Bun.write(Bun.argv[2]!, "Report");`,
           return [];
         },
         async comment() {},
-        async viewer() {
-          return "milo";
-        },
-      };
+      });
       const runner = new Runner(
         {
           agent: { command: [process.execPath, fakeAgent, "{output}"] },
