@@ -183,7 +183,7 @@ export class Runner {
       ];
     }
   }
-  // A tick for one repo, built to fill its pipeline fast: every ready ticket, every PR's next
+  // Local only (the action refuses it): a tick for one repo, built to fill its pipeline fast: every ready ticket, every PR's next
   // review step, and a scan of each category by each of `scanModels`, on up to `agents`
   // concurrent agents. Each job clones into its own folder. With `loop`, every finished job
   // triggers a fresh look, so a new PR's review starts as soon as a slot frees, and a scan that

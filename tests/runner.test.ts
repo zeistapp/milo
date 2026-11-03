@@ -163,6 +163,10 @@ await Bun.write(Bun.argv[2]!, !verify
     expect(await Bun.file(verifyPrompt).text()).toContain(
       "Open tickets and PRs",
     );
+    // Scheduled scans leave open work to the verifier; only turbo's scanner sees it.
+    expect(await Bun.file(scanPrompt).text()).not.toContain(
+      "Open tickets and PRs",
+    );
     // Scanner and verifier both see the rejection and the maintainer's reason, not outsiders or Milo.
     for (const prompt of [scanPrompt, verifyPrompt]) {
       const text = await Bun.file(prompt).text();

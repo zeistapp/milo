@@ -171,9 +171,10 @@ async function scan(
       root,
       scanPrompt(
         category,
-        work,
         rejected,
         projectContext(await inspectProject(root, repo)),
+        // Only turbo chooses a scan model; it alone lists open work in the scan.
+        model ? work : undefined,
       ),
       true,
       "scan",

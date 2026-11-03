@@ -43,13 +43,13 @@ bun run milo --repo owner/repo work 12
 bun run milo --repo owner/repo review 34
 bun run milo --repo owner/repo revise 34
 bun run milo tick
-bun run milo --repo owner/repo turbo   # Every ready ticket, PR step and scan, 4 agents at once
+bun run milo --repo owner/repo turbo   # Local only: every ready ticket, PR step and scan, 4 agents at once
 bun run milo --repo owner/repo turbo --loop  # Repeat: scan, file, work, review, fix, until nothing is left
 bun run milo --config examples/ecosystem.json --category security --period day task
 bun run milo --config examples/ecosystem.json reviews
 ```
 
-`turbo` fills one repo's pipeline faster than the schedule. Choose the repo with `--repo`; turbo never runs across repos. It works every ready ticket, takes every Milo PR's next review step and scans every category, on up to `--agents` (1 to 20, default 4) concurrent agents. Each job clones into its own folder. Turbo scans skip the once-a-day and one-open-ticket-per-category limits, and each category is scanned by every model in `--scan-models` (default `claude-fable-5-1,claude-sonnet-5-5`), one after another so each verifier sees what the last one filed. Scanners are told to skip what open tickets cover. Edits still run on Opus 5.5 and reviews on Sonnet 5.5 unless your config sets models.
+`turbo` is for local use only. Run it from your own machine to fill one repo's pipeline faster than the schedule. The GitHub Action refuses it, and the scheduled workflow never runs it. Every job clones, sets up and runs the repo's checks on your machine, so `--agents` is bounded by your CPU, memory and disk as well as your API limits. Choose the repo with `--repo`; turbo never runs across repos. It works every ready ticket, takes every Milo PR's next review step and scans every category, on up to `--agents` (1 to 20, default 4) concurrent agents. Each job clones into its own folder. Turbo scans skip the once-a-day and one-open-ticket-per-category limits, and each category is scanned by every model in `--scan-models` (default `claude-fable-5-1,claude-sonnet-5-5`), one after another so each verifier sees what the last one filed. Turbo's scanners also see the open tickets and PRs and are told to skip what they cover; scheduled scans leave that check to the verifier. Edits still run on Opus 5.5 and reviews on Sonnet 5.5 unless your config sets models.
 
 Without `--loop`, turbo works from what existed when it started. With `--loop`, every finished job triggers a fresh look at the repo, one look at a time, so a ticket a scan files is worked, and a PR is reviewed, as soon as an agent is free. Tickets and PR steps go before scans. A scan that filed something runs again, and one that found nothing is done for the run. The run ends when nothing is running and nothing is left to start. Only ready tickets are worked: list categories in `autoReady` if you want every verified ticket worked without your approval. A PR waits after two fix rounds or for your change request. A failed job is not retried in the same run, and any job that comes back 10 times is stopped and reported.
 

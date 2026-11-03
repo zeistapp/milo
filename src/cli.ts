@@ -138,7 +138,7 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   if (!numbered && target) throw new Error("Unexpected positional argument");
   const runner = new Runner(config);
   if (action === "turbo") {
-    // One repo per run: choose it explicitly, so a config change never widens the spend.
+    // Local only: action.yml has no turbo case. One repo per run: choose it explicitly, so a config change never widens the spend.
     const repo = values.repo && repos[0];
     if (!repo) throw new Error("Choose a repository for turbo with --repo");
     const agents = Number(values.agents);
