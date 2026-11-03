@@ -91,7 +91,17 @@ export async function openWorkspace(
 }
 
 export async function clone(repo: Repo, root: string, git: Git): Promise<void> {
-  await command(["gh", "repo", "clone", repo.name, root, "--", "--no-tags"]);
+  // HTTPS whatever gh's git_protocol says: pushes authenticate through the gh credential helper
+  // below, and an SSH remote would push with whichever key the user's ssh picks for github.com.
+  await command([
+    "gh",
+    "repo",
+    "clone",
+    `https://github.com/${repo.name}`,
+    root,
+    "--",
+    "--no-tags",
+  ]);
   const [name, email] = await author();
   for (const [key, value] of [
     ["user.name", name],
