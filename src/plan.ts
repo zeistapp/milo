@@ -28,12 +28,16 @@ import type { Context } from "./runner.ts";
 import { type Rejection, scanPrompt, verifyPrompt } from "./scan.ts";
 import { openWorkspace } from "./workspace.ts";
 
+// `models` (turbo) scans each category once per model and ignores the once-a-period and
+// one-open-ticket-per-category limits; the verifier still drops duplicates of open work.
+// Returns the number of tickets filed.
 export async function plan(
   { config, github, cloneRepo }: Context,
   repo: Repo,
   apply = false,
   period: Period = "week",
-): Promise<void> {
+  models?: string[],
+): Promise<number> {
   const gh = github(repo);
   const selected = repo.categories ?? categoryNames;
   const existing = new Map(
@@ -54,46 +58,71 @@ export async function plan(
   // Open PRs come back as issues too; the verifier checks a finding against both.
   const work = parse(z.array(Issue), await gh.pages("issues?state=open"));
   const open = work.filter((issue) => !Object.hasOwn(issue, "pull_request"));
+  let filedCount = 0;
   for (const category of selected) {
     const label = `milo:${category}`;
     const key = periodKey(period, new Date(), scanEveryDays[category]);
-    if (!shouldScan(existing.get(label), key, open, category)) continue;
-    const found = await scan(
-      { config, cloneRepo },
-      repo,
-      category,
-      work.map(({ number, title }) => ({ number, title })),
-      await rejected(gh, label),
-    );
-    if (!apply) {
-      console.log(
-        JSON.stringify({ repository: repo.name, category, found }, null, 2),
-      );
+    if (!models && !shouldScan(existing.get(label), key, open, category))
       continue;
-    }
-    if (found) {
-      const filed = parse(
-        Link.extend({ number: z.number() }),
-        await gh.api("issues", "POST", ticketDraft(found, repo, category, key)),
+    const known = work.map(({ number, title }) => ({ number, title }));
+    const rejections = await rejected(gh, label);
+    // Models scan in turn, so each verifier sees the tickets earlier models filed.
+    for (const model of models ?? [undefined]) {
+      const found = await scan(
+        { config, cloneRepo },
+        repo,
+        category,
+        known,
+        rejections,
+        model,
       );
-      console.log(filed.html_url);
-      // A native dependency, not prose, is what makes runTasks wait; PRs can't block an issue.
-      for (const blocker of open.filter((issue) =>
-        found.blockedBy.includes(issue.number),
-      )) {
-        const { id } = parse(
-          z.object({ id: z.number() }),
-          await gh.api(`issues/${blocker.number}`),
+      if (!apply) {
+        console.log(
+          JSON.stringify(
+            { repository: repo.name, category, model, found },
+            null,
+            2,
+          ),
         );
-        await gh.api(`issues/${filed.number}/dependencies/blocked_by`, "POST", {
-          issue_id: id,
-        });
+        continue;
       }
-    } else console.log(`${repo.name}: ${category} scan found nothing verified`);
-    await gh.api(`labels/${encodeURIComponent(label)}`, "PATCH", {
-      description: scannedNote(key),
-    });
+      if (found) {
+        const filed = parse(
+          Link.extend({ number: z.number() }),
+          await gh.api(
+            "issues",
+            "POST",
+            ticketDraft(found, repo, category, key),
+          ),
+        );
+        console.log(filed.html_url);
+        filedCount++;
+        known.push({ number: filed.number, title: found.title });
+        // A native dependency, not prose, is what makes runTasks wait; PRs can't block an issue.
+        for (const blocker of open.filter((issue) =>
+          found.blockedBy.includes(issue.number),
+        )) {
+          const { id } = parse(
+            z.object({ id: z.number() }),
+            await gh.api(`issues/${blocker.number}`),
+          );
+          await gh.api(
+            `issues/${filed.number}/dependencies/blocked_by`,
+            "POST",
+            { issue_id: id },
+          );
+        }
+      } else
+        console.log(
+          `${repo.name}: ${category} scan${model ? ` (${model})` : ""} found nothing verified`,
+        );
+    }
+    if (apply)
+      await gh.api(`labels/${encodeURIComponent(label)}`, "PATCH", {
+        description: scannedNote(key),
+      });
   }
+  return filedCount;
 }
 // Tickets a maintainer closed as not planned, with the last maintainer comment as the reason.
 // CEILING: reads only the 100 most recently updated closed tickets in the category; page further if rejections get buried.
@@ -130,17 +159,22 @@ async function scan(
   category: Category,
   work: { number: number; title: string }[],
   rejected: Rejection[],
+  model?: string,
 ): Promise<Finding | undefined> {
   return temporary("milo-scan-", async (folder) => {
     const root = join(folder, "repo");
     const workspace = await openWorkspace(repo, root, cloneRepo);
     const report = await runAgent(
-      config,
+      model
+        ? { ...config, agent: { ...config.agent, scanModel: model } }
+        : config,
       root,
       scanPrompt(
         category,
         rejected,
         projectContext(await inspectProject(root, repo)),
+        // Only turbo chooses a scan model; it alone lists open work in the scan.
+        model ? work : undefined,
       ),
       true,
       "scan",

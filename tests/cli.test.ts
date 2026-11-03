@@ -153,6 +153,30 @@ test("invalid commands fail before the runner starts", async () => {
   expect(calls()).toEqual({});
 });
 
+test("turbo runs only on the repository chosen with --repo", async () => {
+  const turbo = spyOn(Runner.prototype, "turbo").mockResolvedValue([]);
+  try {
+    // Choosing is required even when the config lists one repo.
+    await expect(run("turbo")).rejects.toThrow(
+      "Choose a repository for turbo with --repo",
+    );
+    expect(turbo).not.toHaveBeenCalled();
+    await run("--repo", "owner/b", "turbo", "--agents", "5", "--loop");
+    expect(turbo.mock.calls).toEqual([
+      [
+        b,
+        {
+          agents: 5,
+          period: "day",
+          loop: true,
+          scanModels: ["claude-fable-5-1", "claude-sonnet-5-5"],
+        },
+      ],
+    ]);
+  } finally {
+    turbo.mockRestore();
+  }
+});
 test("--help prints usage without loading config or running", async () => {
   await main(["--config", "missing.json", "--help", "tick"]);
   expect(log.mock.calls[0]?.[0]).toStartWith("Milo: bun run milo");

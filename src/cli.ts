@@ -1,8 +1,10 @@
 import { parseArgs } from "node:util";
+import { z } from "zod";
 import {
   Category,
   includeSelfRepo,
   loadConfig,
+  Model,
   Period,
   parse,
 } from "./config.ts";
@@ -29,15 +31,21 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       apply: { type: "boolean", default: false },
       "report-dir": { type: "string" },
       category: { type: "string" },
-      period: { type: "string", default: "week" },
+      period: { type: "string" },
       "self-repo": { type: "string" },
+      agents: { type: "string", default: "4" },
+      loop: { type: "boolean", default: false },
+      "scan-models": {
+        type: "string",
+        default: "claude-fable-5-1,claude-sonnet-5-5",
+      },
       help: { type: "boolean", short: "h" },
     },
   });
   const configFile = values.config ?? "milo.config.json";
   if (values.help) {
     console.log(
-      "Milo: bun run milo [--config path] [--repo owner/repo] <validate|packages|inspect|check|plan|task|reviews|work|review|revise|tick> [number/path] [--apply] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
+      "Milo: bun run milo [--config path] [--repo owner/repo] <validate|packages|inspect|check|plan|task|reviews|work|review|revise|tick|turbo> [number/path] [--apply] [--agents 1-20] [--loop] [--scan-models a,b] [--category name] [--period day|week|month] [--self-repo owner/repo] [--report-dir path]",
     );
     return;
   }
@@ -75,15 +83,22 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
       "review",
       "revise",
       "tick",
+      "turbo",
     ].includes(action)
   )
     throw new Error("Specify a command; use --help");
   const category = values.category
     ? parse(Category, values.category)
     : undefined;
+  if (values.loop && action !== "turbo")
+    throw new Error("Use --loop with turbo");
   if (category && !["task", "plan", "work"].includes(action))
     throw new Error("Use --category with task, plan, or work");
-  const period = parse(Period, values.period ?? "week");
+  // Turbo scans like the scheduled tick, once a day per category.
+  const period = parse(
+    Period,
+    values.period ?? (action === "turbo" ? "day" : "week"),
+  );
   let config = await loadConfig(configFile);
   if (values["self-repo"])
     config = includeSelfRepo(config, values["self-repo"]);
@@ -122,6 +137,27 @@ export async function main(args = Bun.argv.slice(2)): Promise<void> {
   }
   if (!numbered && target) throw new Error("Unexpected positional argument");
   const runner = new Runner(config);
+  if (action === "turbo") {
+    // Local only: action.yml has no turbo case. One repo per run: choose it explicitly, so a config change never widens the spend.
+    const repo = values.repo && repos[0];
+    if (!repo) throw new Error("Choose a repository for turbo with --repo");
+    const agents = Number(values.agents);
+    if (!Number.isInteger(agents) || agents < 1 || agents > 20)
+      throw new Error("--agents must be a whole number from 1 to 20");
+    const scanModels = parse(
+      z.array(Model("--scan-models").unwrap()).min(1),
+      (values["scan-models"] ?? "").split(",").filter(Boolean),
+    );
+    const failed = await runner.turbo(repo, {
+      agents,
+      period,
+      loop: values.loop,
+      scanModels,
+    });
+    for (const failure of failed) fail(`${repo.name} ${failure}`);
+    if (failed.length) throw new Error(`${failed.length} turbo job(s) failed`);
+    return;
+  }
   const failures: string[] = [];
   for (const repo of repos) {
     try {
