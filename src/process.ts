@@ -2,15 +2,24 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   writeSync,
 } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import type { Writable } from "node:stream";
 import type { Argv, Step } from "./config.ts";
 
@@ -178,7 +187,7 @@ export function confine(
 ): Argv {
   const secrets = secretDirs.map((dir) => join(homedir(), dir));
   // command() drops SSH_AUTH_SOCK, but a step can still find the socket, so block its real path.
-  const agentSocket = existingRealPath(process.env.SSH_AUTH_SOCK);
+  const agentSocket = socketRealPath(process.env.SSH_AUTH_SOCK);
   const runtimeDir = process.env.XDG_RUNTIME_DIR;
   if (process.platform === "linux")
     return [
@@ -239,10 +248,14 @@ export function confine(
   }
   throw new Error("Untrusted steps need a Linux or macOS sandbox");
 }
-function existingRealPath(path: string | undefined): string | undefined {
+// Bun's realpath fails on a socket (EOPNOTSUPP on macOS), so follow the links by hand and
+// resolve only the folder.
+function socketRealPath(path: string | undefined): string | undefined {
   if (!path) return;
   try {
-    return realpathSync(path);
+    for (let hops = 0; hops < 40 && lstatSync(path).isSymbolicLink(); hops++)
+      path = resolve(dirname(path), readlinkSync(path));
+    return join(realpathSync(dirname(path)), basename(path));
   } catch {
     return;
   }
