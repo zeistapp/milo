@@ -4,36 +4,40 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { localCheck } from "../src/local.ts";
 import { temporary } from "../src/process.ts";
+import { nestedSandboxDenied } from "./helpers.ts";
 
-test("local checks report failures, continue checks and save private logs", () =>
-  temporary("milo-local-", async (root) => {
-    const printed = spyOn(console, "log");
-    const report = await localCheck(root, join(root, "reports"), {
-      setup: [],
-      checks: [
-        {
-          command: [
-            process.execPath,
-            "-e",
-            "console.error('diagnostic');process.exit(1)",
-          ],
-        },
-        { command: [process.execPath, "-e", "console.log('passed')"] },
-      ],
-    });
-    expect(report.passed).toBeFalse();
-    expect(report.results.map((result) => result.status)).toEqual([
-      "failed",
-      "passed",
-    ]);
-    const log = report.results[0]?.log;
-    assert(log);
-    expect(await Bun.file(log).text()).toContain("diagnostic");
-    expect((await stat(log)).mode & 0o777).toBe(0o600);
-    // The failing step's output is printed, so CI shows why it failed.
-    expect(printed.mock.calls.flat().join("\n")).toContain("diagnostic");
-    printed.mockRestore();
-  }));
+test.skipIf(nestedSandboxDenied)(
+  "local checks report failures, continue checks and save private logs",
+  () =>
+    temporary("milo-local-", async (root) => {
+      const printed = spyOn(console, "log");
+      const report = await localCheck(root, join(root, "reports"), {
+        setup: [],
+        checks: [
+          {
+            command: [
+              process.execPath,
+              "-e",
+              "console.error('diagnostic');process.exit(1)",
+            ],
+          },
+          { command: [process.execPath, "-e", "console.log('passed')"] },
+        ],
+      });
+      expect(report.passed).toBeFalse();
+      expect(report.results.map((result) => result.status)).toEqual([
+        "failed",
+        "passed",
+      ]);
+      const log = report.results[0]?.log;
+      assert(log);
+      expect(await Bun.file(log).text()).toContain("diagnostic");
+      expect((await stat(log)).mode & 0o777).toBe(0o600);
+      // The failing step's output is printed, so CI shows why it failed.
+      expect(printed.mock.calls.flat().join("\n")).toContain("diagnostic");
+      printed.mockRestore();
+    }),
+);
 test("failed setup skips checks without claiming they passed", () =>
   temporary("milo-local-", async (root) => {
     const report = await localCheck(root, join(root, "reports"), {
@@ -50,31 +54,34 @@ test("failed setup skips checks without claiming they passed", () =>
     ]);
     expect(report.passed).toBeFalse();
   }));
-test("local checks run sandboxed like scheduled work", () =>
-  temporary("milo-local-", async (root) => {
-    const outside = join(import.meta.dir, `escape-${process.pid}`);
-    const report = await localCheck(root, join(root, "reports"), {
-      setup: [],
-      checks: [
-        {
-          command: [
-            process.execPath,
-            "-e",
-            `require("node:fs").writeFileSync(${JSON.stringify(outside)}, "")`,
-          ],
-        },
-        {
-          command: [
-            process.execPath,
-            "-e",
-            "require('node:fs').writeFileSync('inside', '')",
-          ],
-        },
-      ],
-    });
-    expect(report.results.map((result) => result.status)).toEqual([
-      "failed",
-      "passed",
-    ]);
-    expect(await Bun.file(outside).exists()).toBeFalse();
-  }));
+test.skipIf(nestedSandboxDenied)(
+  "local checks run sandboxed like scheduled work",
+  () =>
+    temporary("milo-local-", async (root) => {
+      const outside = join(import.meta.dir, `escape-${process.pid}`);
+      const report = await localCheck(root, join(root, "reports"), {
+        setup: [],
+        checks: [
+          {
+            command: [
+              process.execPath,
+              "-e",
+              `require("node:fs").writeFileSync(${JSON.stringify(outside)}, "")`,
+            ],
+          },
+          {
+            command: [
+              process.execPath,
+              "-e",
+              "require('node:fs').writeFileSync('inside', '')",
+            ],
+          },
+        ],
+      });
+      expect(report.results.map((result) => result.status)).toEqual([
+        "failed",
+        "passed",
+      ]);
+      expect(await Bun.file(outside).exists()).toBeFalse();
+    }),
+);

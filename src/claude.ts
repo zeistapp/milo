@@ -8,6 +8,7 @@ import {
   keptLog,
   sandboxEnv,
   secretDirs,
+  temporary,
 } from "./process.ts";
 
 // Required CLI floor for restricted mode and fail-closed shell sandbox settings.
@@ -54,12 +55,14 @@ function stopReason({ subtype, result }: z.infer<typeof Outcome>): string {
 
 type Flags = Pick<Agent, "model" | "effort" | "maxBudgetUsd"> & {
   jsonSchema?: string;
+  // Authenticate with CLAUDE_CODE_OAUTH_TOKEN, which bare mode ignores.
+  subscription?: boolean;
 };
 export function claudeCommand(
   root: string,
   home: string,
   readOnly: boolean,
-  { model, effort, maxBudgetUsd, jsonSchema }: Flags = {},
+  { model, effort, maxBudgetUsd, jsonSchema, subscription }: Flags = {},
 ): Argv {
   // Read-only runs keep a sandboxed shell for searching, git history and registry lookups.
   const tools = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "Bash"];
@@ -87,7 +90,9 @@ export function claudeCommand(
   };
   return [
     "claude",
-    "--bare",
+    // Without bare mode, loading no setting sources keeps hooks and plugins out, and
+    // runClaude's fresh CLAUDE_CONFIG_DIR keeps out user CLAUDE.md, memory and skills.
+    ...(subscription ? ["--setting-sources", ""] : ["--bare"]),
     "--restricted",
     "--print",
     // Bare mode skips CLAUDE.md discovery; --add-dir restores it for the repository.
@@ -143,13 +148,25 @@ export async function runClaude(
   const { HOME: _, ...paths } = sandboxEnv(home);
   // Claude exits 1 on API errors but still prints its JSON result, which says why.
   let failure: CommandError | undefined;
-  const stdout = await command(claudeCommand(root, home, readOnly, flags), {
-    ...options,
-    input,
-    // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
-    env: { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1", ...paths },
-    logFile: keptLog("claude"),
-  }).catch((error) => {
+  // An API key wins, so CI keeps bare mode.
+  const subscription =
+    !process.env.ANTHROPIC_API_KEY && !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const run = (config?: string) =>
+    command(claudeCommand(root, home, readOnly, { ...flags, subscription }), {
+      ...options,
+      input,
+      env: {
+        // Claude may ignore CLAUDE.md in --add-dir directories without this flag.
+        CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1",
+        ...paths,
+        ...(config && { CLAUDE_CONFIG_DIR: config }),
+      },
+      logFile: keptLog("claude"),
+    });
+  const stdout = await (subscription
+    ? temporary("milo-claude-", run)
+    : run()
+  ).catch((error) => {
     if (!(error instanceof CommandError)) throw error;
     failure = error;
     return error.stdout;
