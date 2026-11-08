@@ -70,6 +70,8 @@ export function claudeCommand(
   if (!readOnly) tools.push("Edit", "Write");
   const settings = {
     env: { DISABLE_UPDATES: "1" },
+    // Reports are published as-is; drop Claude Code's "Generated with" PR and commit footer.
+    attribution: { commit: "", pr: "" },
     sandbox: {
       enabled: true,
       failIfUnavailable: true,

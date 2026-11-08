@@ -30,22 +30,22 @@ export const categoryNames = Current.options;
 // Each scan stays in its area, with its own evidence bar, so a finding has one obvious home.
 export const categories = {
   security:
-    "Review security-sensitive code: authentication, authorisation, injection, secret handling and data crossing trust boundaries. Show the exploit path. " +
-    "Make Zod schemas the source of truth for data crossing trust boundaries: derive types with z.infer and parse instead of casting. Add Zod only where it replaces hand-written validation or unchecked casts. " +
+    "Security-sensitive code: authentication, authorisation, injection, secret handling, data crossing trust boundaries. Show the exploit path. " +
+    "Zod schemas are the source of truth at trust boundaries: derive types with z.infer, parse instead of casting. Add Zod only where it replaces hand-written validation or unchecked casts. " +
     "Never publish credentials or sensitive exploit details.",
   bugs:
-    "Find behaviour that is wrong today: unhandled edge cases and errors, races, state that can get stuck, and code that contradicts its tests, types or docs. " +
-    "Places worth checking, though none is a finding by itself: a switch over a union whose default silently absorbs members added later; a promise nobody awaits, handles or marks void with a reason, or an async callback passed where nothing awaits it; throwing a value that is not an Error; an any outside a third-party boundary; an optional parameter callers omit by mistake; a function too complex to follow. " +
-    "Where the repo's linter has a rule for the pattern (in Biome: noExplicitAny, useThrowOnlyError, noExcessiveCognitiveComplexity), propose enabling it as the fix. " +
-    "Show the failing input or trace the fault, and add a test that fails before the fix.",
+    "Behaviour wrong today: unhandled edge cases and errors, races, state that can get stuck, code contradicting its tests, types or docs. " +
+    "Worth checking, though none is a finding alone: a union switch whose default silently absorbs later members; a promise nobody awaits, handles or voids with a reason, or an async callback nothing awaits; throwing a non-Error; any outside a third-party boundary; an optional parameter callers omit by mistake; a function too complex to follow. " +
+    "Where the linter has a rule for the pattern (Biome: noExplicitAny, useThrowOnlyError, noExcessiveCognitiveComplexity), propose enabling it as the fix. " +
+    "Show the failing input or trace the fault; add a test that fails before the fix.",
   architecture:
-    "Find friction where future changes will land: start from hot spots in recent git history, then trace those flows. Look for shallow modules, one concept spread across many files, coupling that leaks across seams, and names that hide what a module does or contradict the glossary, and UI components that hold flow, async or error logic a pure reducer should own; apply the deletion test. " +
-    "Propose one deepening that improves locality and testability: the modules involved, the smaller interface and how tests move to it. Preserve the established framework, build patterns and ADRs. " +
-    "When the proposal is a rule code can check, propose the check (a lint rule, an import-boundary config, or a small guard script whose allowlist of existing violations may only shrink) rather than a written convention.",
+    "Friction where future changes land: start from hot spots in recent git history and trace those flows. Look for shallow modules, one concept spread across files, coupling leaking across seams, names that hide what a module does or contradict the glossary, and UI components holding flow, async or error logic a reducer should own; apply the deletion test. " +
+    "Propose one deepening that improves locality and testability: modules involved, the smaller interface, how tests move to it. Preserve the framework, build patterns and ADRs. " +
+    "If the rule is checkable by code, propose the check (lint rule, import-boundary config, or guard script whose allowlist of existing violations may only shrink), not a written convention.",
   simplify:
-    "Make code shorter and clearer without changing behaviour: remove proven dead code and duplication, and replace dated JS, TS and CSS with modern native features within the project's supported runtimes and browser targets. " +
+    "Shorter, clearer code, same behaviour: remove proven dead code and duplication; replace dated JS, TS and CSS with modern native features within supported runtimes and browser targets. " +
     "Prefer inference, satisfies and as const over annotations and assertions. Preserve public APIs; inspect every caller of shared code. " +
-    "Delete tests that fail the test bar, except a regression test from a past fix or the last guard on a real rule; fold that guard's assertion into a surviving test instead.",
+    "Delete tests failing the test bar, except a regression test from a past fix or the last guard on a real rule; fold that guard into a surviving test.",
 } satisfies Record<Category, string>;
 // Daily scans of these categories wait this many days between runs.
 export const scanEveryDays: Partial<Record<Category, number>> = { simplify: 3 };

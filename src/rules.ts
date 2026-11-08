@@ -81,10 +81,15 @@ export function periodKey(
 // The category label's description records the last scan, so clean scans leave no issue behind.
 export const scannedNote = (key: string) => `Milo scanned ${key}`;
 // Agents return results as structured output, so text quoted from a diff or ticket cannot set a verdict.
+// Claude Code checks structured output against these schemas and retries in-session, so the
+// caps hold where the policy's word limits alone did not. Reports average under 7 characters a
+// word, so these match the 200-word ticket and 120-word review limits.
+const ticketChars = 1400;
+const reviewChars = 840;
 export const ScanResult = z.object({
   clean: z.boolean(),
   title: z.string(),
-  body: z.string(),
+  body: z.string().max(ticketChars),
 });
 export const VerifiedResult = ScanResult.extend({
   ready: z.boolean(),
@@ -95,7 +100,7 @@ export const ReviewResult = z.object({
   verdict: z.enum(["merge", "fix", "hold"]),
   reversibility: z.enum(["two-way", "one-way"]),
   blastRadius: z.string(),
-  body: z.string(),
+  body: z.string().max(reviewChars),
 });
 export type ReviewResult = z.infer<typeof ReviewResult>;
 export type Finding = {
