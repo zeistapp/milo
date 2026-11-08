@@ -357,14 +357,14 @@ export async function lockstepDrift(
 
 export function projectContext(project: Project): string {
   return (
-    "Repository profile (inspect installed versions and consult current official documentation before using unfamiliar APIs):\n" +
+    "Repository profile (check installed versions and current official docs before using unfamiliar APIs):\n" +
     JSON.stringify({
       packages: project.packages,
       warnings: project.warnings,
       checks: project.checks,
     }) +
-    "\nPreserve the existing runtime, framework, module format, workspace layout and deployment adapters. " +
-    "For frontend/SSR code check hydration and server/client boundaries. For Hono and other servers check routes, middleware order, auth, validation and runtime bindings. " +
-    "For libraries preserve exports, peer dependencies and supported consumers. For build changes preserve task graphs and outputs. Do not invent framework APIs or migrate stacks."
+    "\nPreserve the runtime, framework, module format, workspace layout and deployment adapters. " +
+    "Frontend/SSR: check hydration and server/client boundaries. Hono and other servers: routes, middleware order, auth, validation, runtime bindings. " +
+    "Libraries: preserve exports, peer dependencies, supported consumers. Build changes: preserve task graphs and outputs. Don't invent framework APIs or migrate stacks."
   );
 }

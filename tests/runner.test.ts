@@ -32,7 +32,7 @@ test("plan files the verified finding, records clean scans and skips repeat runs
       `const prompt = await Bun.stdin.text();
 const log = Bun.file(${JSON.stringify(calls)});
 await Bun.write(log, (await log.exists() ? await log.text() : "") + "x");
-const verify = prompt.includes("A scan raised the ticket below");
+const verify = prompt.includes("Verify the scan ticket below");
 await Bun.write(verify ? ${JSON.stringify(verifyPrompt)} : ${JSON.stringify(scanPrompt)}, prompt);
 const result = (clean, title, body, ready) => JSON.stringify({ clean, title, body, ...(verify ? { ready, blockedBy: [30, 31, 99] } : {}) });
 await Bun.write(Bun.argv[2]!, !verify
@@ -839,10 +839,10 @@ const counter = Bun.file(${JSON.stringify(invocations)});
 await Bun.write(counter, String((await counter.exists() ? Number(await counter.text()) : 0) + 1));
 if (prompt.includes("Implement this ticket:")) {
   await Bun.write(${JSON.stringify(workPrompt)}, prompt);
-  if (!prompt.includes("stale")) await Bun.write("file.txt", "new\\n");
+  if (!prompt.includes('"body":"stale"')) await Bun.write("file.txt", "new\\n");
 }
 if (prompt.includes("Address these review requests")) await Bun.write("file.txt", "reviewed\\n");
-if (prompt.includes("Fix these findings")) await Bun.write("file.txt", prompt.includes("Rename it") ? "fixed\\n" : "wrong\\n");
+if (prompt.includes("Fix these automated review findings")) await Bun.write("file.txt", prompt.includes("Rename it") ? "fixed\\n" : "wrong\\n");
 if (prompt.includes("Review the diff")) await Bun.write(${JSON.stringify(reviewPrompt)}, prompt);
 await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
   ? JSON.stringify({ verdict: "merge", reversibility: "two-way", blastRadius: "file.txt", body: "Report with evidence" })
@@ -964,7 +964,7 @@ await Bun.write(Bun.argv[2]!, prompt.includes("Review the diff")
       // The agent checks the ticket against what changed since it was written.
       const prompt = await Bun.file(workPrompt).text();
       expect(prompt).toContain("git log --since=2026-10-15T09:00:00Z");
-      expect(prompt).toContain("If the evidence or plan no longer holds");
+      expect(prompt).toContain("If they no longer hold, change nothing");
       // Writers' and Milo's comments reach the agent oldest first; outsiders' do not.
       expect(prompt).toContain(
         JSON.stringify([

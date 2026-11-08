@@ -416,7 +416,7 @@ describe("project profiling edge cases", () => {
     const context = projectContext(project);
     expect(context).toStartWith("Repository profile");
     expect(context).toContain(JSON.stringify({ packages, warnings, checks }));
-    expect(context).toContain("Do not invent framework APIs");
+    expect(context).toContain("Don't invent framework APIs");
   });
   test("package patterns and TypeScript are detected for agent context", async () => {
     const patterns = async (manifest: object) =>

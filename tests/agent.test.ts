@@ -144,12 +144,12 @@ process.exit(Number(process.env.MILO_TEST_EXIT ?? 0));
       );
       const invocation = await Bun.file(join(root, "invocation.json")).json();
       expect(invocation.input).toContain("Review this");
-      expect(invocation.input).toContain("Do not commit");
+      expect(invocation.input).toContain("Never commit");
       expect(invocation.input).toContain(
-        "read the repository root AGENTS.md and CLAUDE.md",
+        "read root and touched-directory AGENTS.md and CLAUDE.md",
       );
       expect(invocation.input).toContain(
-        "senior full-stack engineer who reviews this repository every day",
+        "senior full-stack engineer who reviews this repository daily",
       );
       expect(invocation.github).toBeUndefined();
       expect(invocation.anthropic).toBe("fake-anthropic-secret");

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { z } from "zod";
 import { parseConfig } from "../src/config.ts";
 import type { Issue, PullRequest, Review } from "../src/github.ts";
 import {
@@ -275,4 +276,31 @@ test("a ticket is ready through autoReady or the verifier, and names its merge p
     ticketDraft(found, { ...repo, autoMerge: ["security"] }, "security", "k")
       .body,
   ).toEndWith(" Milo may merge a minor, reviewed PR after CI passes.");
+});
+
+test("result schemas give Claude Code length caps to enforce on reviews and tickets", () => {
+  // A typical 120-word review fits; a 200-word one does not. The same holds at 200 words for tickets.
+  const words = (n: number) => Array(n).fill("src/a.ts").join(" ");
+  const review = (body: string) => ({
+    verdict: "fix",
+    reversibility: "two-way",
+    blastRadius: "x",
+    body,
+  });
+  expect(ReviewResult.safeParse(review(words(90))).success).toBeTrue();
+  expect(ReviewResult.safeParse(review(words(200))).success).toBeFalse();
+  const ticket = (body: string) => ({
+    clean: false,
+    title: "t",
+    body,
+    ready: false,
+  });
+  expect(VerifiedResult.safeParse(ticket(words(150))).success).toBeTrue();
+  expect(VerifiedResult.safeParse(ticket(words(300))).success).toBeFalse();
+  // The cap must reach the JSON schema Claude Code validates against, not only Milo's parse.
+  // Serialised as runAgent sends it.
+  const schema = JSON.parse(
+    JSON.stringify(z.toJSONSchema(ReviewResult, { target: "draft-7" })),
+  );
+  expect(schema.properties.body.maxLength).toBeNumber();
 });
